@@ -1,5 +1,9 @@
 #lang racket/base
 
+(require "./type.rkt")
+
+(provide (all-defined-out))
+
 (struct rule (query actions) #:transparent)
 (struct query (query) #:transparent)
 (struct actions (actions) #:transparent)
@@ -21,8 +25,6 @@
    ;; merge-expr
    )
   #:transparent)
-
-(define semilattice (dom ⊥ ∨))
 
 (define-syntax define-atom
   (syntax-rules (=)
@@ -75,10 +77,9 @@
     [(define-function (name inputs ...) output)
      (function (quote name) (cons (list inputs ...) output))]))
 
+;; sort
 (define-sort sort)
 (define-function (R 'integer 'integer) min-nat)
-
-(define min-nat (semilattice exact-nonnegative-integer? 0 (λ (x y) (+ x y))))
 
 (define-rule
   ([= ab (+ a b)]
