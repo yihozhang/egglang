@@ -2,10 +2,8 @@
 
 (require "./type.rkt")
 
-(provide (all-defined-out))
-
 (struct rule (query actions) #:transparent)
-(struct query (query) #:transparent)
+(struct query (atoms) #:transparent)
 (struct actions (actions) #:transparent)
 
 (struct value-eq (lhs rhs) #:transparent)
@@ -76,17 +74,6 @@
   (syntax-rules ()
     [(define-function (name inputs ...) output)
      (function (quote name) (cons (list inputs ...) output))]))
-
-;; sort
-(define-sort sort)
-(define-function (R 'integer 'integer) min-nat)
-
-(define-rule
-  ([= ab (+ a b)]
-   [= r1 (+ ab c )])
-  ([let bc (+ b c)]
-   [let r2 (+ a bc)]
-   [union r1 r2]))
 
    
 
