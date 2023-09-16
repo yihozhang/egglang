@@ -2,8 +2,9 @@
 
 (require racket/match)
 (require racket/list)
-(require "./lib.rkt")
+(require "./ast.rkt")
 
+(provide (all-defined-out))
 
 ;; 
 (struct core-atom (fun args) #:transparent)
@@ -93,20 +94,3 @@
 (define (flatten-rule rule)
   (core-rule (flatten-query (rule-query rule))
              (flatten-actions (rule-actions rule))))
-
-
-(flatten-atom (define-atom (= (f (g (h x))) (g (h x)))))
-
-(flatten-query (define-query ((= (f (g (h x))) (g (h x))))))
-
-
-;; sort
-(define-sort sort)
-
-(define-rule R
-  ([= ab (+ a b)]
-   [= r1 (+ ab c )])
-  ([let bc (+ b c)]
-   [let r2 (+ a bc)]
-   [union r1 r2]))
-(flatten-rule R)
