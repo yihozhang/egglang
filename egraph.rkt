@@ -1,0 +1,45 @@
+#lang racket/base
+
+(provide current-egraph
+         current-ruleset
+         register-function
+         register-sort
+         register-rule
+         egraph-rulesets)
+(require data/gvector
+         racket/function)
+
+(struct egraph
+  (functions
+   sorts
+   rulesets))
+
+(define (make-egraph)
+  (egraph
+   (make-hash)
+   (make-gvector)
+   (make-hash)))
+
+(define (register-function egraph function)
+  (define functions (egraph-functions egraph))
+  (hash-set! functions function (make-table))
+  )
+
+(define (register-sort egraph sort)
+  (define sorts (egraph-sorts egraph))
+  (gvector-add! sorts sort))
+
+(define (register-rule egraph rule #:ruleset ruleset)
+  (define rulesets (egraph-rulesets egraph))
+  (define rs (hash-ref! rulesets ruleset (thunk (make-gvector))))
+  (gvector-add! rs rule))
+
+(struct table
+  (entries))
+
+(define (make-table)
+  (table (make-gvector)))
+
+(define current-egraph (make-parameter (make-egraph)))
+
+(define current-ruleset (make-parameter 'main))

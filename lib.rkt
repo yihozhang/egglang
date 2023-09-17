@@ -4,7 +4,10 @@
 (require "./ast.rkt")
 (require "./core.rkt")
 
-(provide (rename-out [define-rule rule]
-                     [define-sort sort]
-                     [define-function function])
-         (all-from-out "./core.rkt"))
+(provide (rename-out [make-rule rule]
+                     [make-sort sort]
+                     [make-function function]
+                     [make-ruleset ruleset])
+         show-function show-rule
+         (all-from-out "./core.rkt")
+         (except-out (all-from-out "./type.rkt") sort))

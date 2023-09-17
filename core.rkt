@@ -3,10 +3,10 @@
 (require racket/match)
 (require racket/list)
 (require "./ast.rkt")
+(require "./egraph.rkt")
 
 (provide (all-defined-out))
 
-;; 
 (struct core-atom (fun args) #:transparent)
 (struct core-let-atom-action (var fun args) #:transparent)
 (struct core-let-val-action (var val) #:transparent)
@@ -28,13 +28,13 @@
     [(call fun args) (let* ([flattened (map go args)]
                             [children-args (map car flattened)]
                             [children-atoms (map cdr flattened)]
-                            
+
                             [o (gensym)]
                             [atom (constructor fun children-args o)]
-                            
+
                             [atoms (foldr append (list atom) children-atoms)])
                        (cons o atoms))]
-     
+
     [_ (cons e '())]))
 
 
@@ -62,7 +62,7 @@
                            (list (core-atom 'value-eq (list lhs-var rhs-var))))])
        atoms)]
     [_ (cdr (flatten-query-expr a))]))
-    
+
 (define (flatten-query q)
   (define atoms-list (map flatten-atom (query-atoms q)))
   (core-query (append* atoms-list)))
