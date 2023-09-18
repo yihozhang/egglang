@@ -6,7 +6,9 @@
          show-base-type base-type? literal?
          function show-function function-name False)
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; base types
+
 (define i64 'i64)
 (define u64 'u64)
 (define unit '())
@@ -29,7 +31,9 @@
     ['u64 'u64]
     [(sort name) `(sort ,name)]))
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; functions
+
 (struct function
   (name
    ;; a pair of input types and output type
@@ -39,7 +43,6 @@
 
 (define False (function 'False (cons '() unit)))
 
-;; formatting
 (define (show-function func)
   (define name (function-name func))
   (define in (car function-types))

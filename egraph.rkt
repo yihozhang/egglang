@@ -8,6 +8,8 @@
          racket/function
          "./core.rkt"
          "./ast.rkt")
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; egraph
 
 (struct egraph
   (functions
@@ -34,12 +36,6 @@
   (define rules (hash-ref! rulesets ruleset (thunk (make-gvector))))
   (gvector-add! rules rule))
 
-(struct table
-  (entries))
-
-(define (make-table)
-  (table (make-gvector)))
-
 (define current-egraph (make-parameter (make-egraph)))
 
 (define current-ruleset (make-parameter 'main))
@@ -47,5 +43,18 @@
 (define (run1 egraph ruleset)
   (define rules (hash-ref (egraph-rulesets egraph) ruleset))
   (define compiled-rules (for/list ([rule (in-gvector rules)]) (compile rule egraph)))
-  compiled-rules
+
+  (define matches (map (compose (curry run-query egraph) core-rule-query) compiled-rules))
+  (map (lambda (rule ms) (map (curry run-actions egraph (core-rule-actions rule)) ms)) compiled-rules matches)
   )
+
+(define (run-query egraph query) '())
+(define (run-actions egraph actions m) '())
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; table
+(struct table
+  (entries))
+
+(define (make-table)
+  (table (make-gvector)))

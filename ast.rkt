@@ -5,6 +5,9 @@
          "type.rkt")
 (provide (all-defined-out))
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Surface IR declaration
+
 (struct rule (query actions) #:transparent)
 (struct query (atoms) #:transparent)
 (struct actions (actions) #:transparent)

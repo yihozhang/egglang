@@ -8,17 +8,24 @@
 (function (add S S) S)
 
 
+; (define (R)
+;   (rule
+;    ([= ab (add a b)]
+;     [= r1 (add ab c )])
+;    ([let ab (add b c)]
+;     [let r2 (add a ab)]
+;     [union r1 r2])))
+
 (define (R)
   (rule
-   ([= ab (add a b)]
-    [= r1 (add ab c )])
-   ([let bc (add b c)]
-    [let r2 (add a bc)]
+   ([= r r])
+   ([let r (add b c)]
+    [let r (add r r)]
+    [let r (add r r)]
     [union r1 r2])))
 (ruleset main
          (R))
 
 (require "egraph.rkt")
-(egraph-rulesets (current-egraph))
 
 (run1 (current-egraph) 'main)

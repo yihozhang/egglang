@@ -2,9 +2,14 @@
 
 (require racket/match
          racket/list
+         racket/set
+         racket/function
          "ast.rkt"
          "type.rkt")
 (provide (all-defined-out))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Core IR declaration
 
 ;; atoms
 (struct core-atom (fun args) #:transparent)
@@ -23,7 +28,8 @@
 ;; constant
 (define false-atom (core-atom False '()))
 
-;; lowering to the core
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Lowering/flattening to the core
 
 ;; constructor takes function name, args, and output argument
 ;; and returns the constructed object
@@ -34,7 +40,7 @@
                             [children-args (map car flattened)]
                             [children-atoms (map cdr flattened)]
 
-                            [o (gensym)]
+                            [o (gensym (function-name fun))]
                             [atom (constructor fun children-args o)]
 
                             [atoms (foldr append (list atom) children-atoms)])
@@ -99,8 +105,10 @@
   (core-rule (flatten-query (rule-query rule))
              (flatten-actions (rule-actions rule))))
 
-;; substitution
-(define (subst-core-atom atom v e)
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Variables and substitutions in Core IR
+
+(define (subst-core-atom v e atom)
   (define (replace arg) (if (equal? arg v) e arg))
   (match atom
     [(core-atom fun args)
@@ -108,22 +116,67 @@
     [(core-value-eq lhs rhs)
      (core-value-eq (replace lhs) (replace rhs))]))
 
-(define (subst-core-action action v e)
+(define (subst-core-action v e action #:check-conflict? [check-conflict? #t])
   (define (replace arg) (if (equal? arg v) e arg))
   (match action
     [(core-let-atom-action var fun args)
-     (when (equal? var v) (error "let-bound vars conflict"))
+     (when (and check-conflict? (equal? var v)) (error "let-bound vars conflict"))
      (core-let-atom-action var fun (map replace args))]
     [(core-let-val-action var val)
-     (when (equal? var v) (error "let-bound vars conflict"))
+     (when (and check-conflict? (equal? var v)) (error "let-bound vars conflict"))
      (core-let-val-action var (replace val))]
     [(core-set-action fun args expr)
      (core-set-action fun (map replace args) (replace expr))]
     [(core-union-action v1 v2)
      (core-union-action (replace v1) (replace v2))]))
 
+;; Returns variable arguments in the atom
+(define (collect-vars-core-atom atom)
+  (match atom
+    [(core-atom fun args) (filter symbol? args)]
+    [(core-value-eq lhs rhs) (filter symbol? (list lhs rhs))]))
 
-;; canonicalize query
+;; Conflict-avoiding Renaming
+(define (rename-rule rule)
+  (match-define
+    (core-rule (core-query atoms)
+               (core-actions actions))
+    rule)
+  (define vars (list->set (flatten (map collect-vars-core-atom atoms))))
+  (define (update vars var actions)
+    (if (set-member? vars var)
+        (let* ([new-var (gensym var)]
+               [new-vars (set-add vars new-var)]
+               [new-actions (map (curry subst-core-action var new-var #:check-conflict? #f) actions)])
+          (values new-vars new-var new-actions))
+        (values (set-add vars var) var actions)))
+  (define actions+
+    (let loop ([actions actions]
+               [vars vars]
+               [result '()])
+      (if (null? actions) (reverse result)
+          (let ([action (car actions)]
+                [actions (cdr actions)])
+            (match action
+              [(core-let-atom-action var fun args)
+               (define-values (vars+ var+ actions+) (update vars var actions))
+               (define action+ (core-let-atom-action var+ fun args))
+               (loop actions+ vars+ (cons action+ result))]
+              [(core-let-val-action var val)
+               (define-values (vars+ var+ actions+) (update vars var actions))
+               (define action+ (core-let-val-action var+ val))
+               (loop actions+ vars+ (cons action+ result))]
+              [(or (core-set-action _ _ _)
+                   (core-union-action _ _))
+               (loop actions vars (cons action result))])))))
+
+  (core-rule (core-query atoms)
+             (core-actions actions+)))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Canonicalization
+
+;; Canonicalize all value-eqs in query
 (define (canonicalize-value-eq rule)
   (let loop ([rule rule])
     (match-define
@@ -136,14 +189,14 @@
         (match-let ([(core-value-eq lhs rhs) core-value-eq-atom])
           (define (go v e)
             (let* ([atoms+ (remove* (list (core-value-eq e e))
-                                    (map (lambda (atom) (subst-core-atom atom v e)) atoms))]
-                   [actions+ (map (lambda (action) (subst-core-action action v e)) actions)])
+                                    (map (curry subst-core-atom v e) atoms))]
+                   [actions+ (map (curry subst-core-action v e) actions)])
               (core-rule (core-query atoms+) (core-actions actions+))))
 
           (define rule+
             (cond [(equal? lhs rhs) ; (= x x): remove the atom
                    (let ([atoms+ (remove core-value-eq-atom atoms)])
-                     (core-rule (core-query atoms+)) (core-actions actions))]
+                     (core-rule (core-query atoms+) (core-actions actions)))]
                   [(symbol? lhs) (go lhs rhs)] ; (= x y) where x is a symbol: subst x y
                   [(symbol? rhs) (go rhs lhs)] ; (= x y) where y is a symbol: subst y x
                   [(and (literal? lhs) ; (= l1 l2) where (!= l1 l2): replace with false
@@ -154,13 +207,20 @@
           (loop rule+))
         rule)))
 
-;; TODO show core rules
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Compiler declaration
+
 (define (rcompose . args)
   (apply compose (reverse args)))
 
 (define (compile rule egraph)
   (define passes
     (rcompose flatten-rule
+              rename-rule
               canonicalize-value-eq
+              ;; TODO
+              ;; canonicalize-let-val
+              ;; boundness analysis
+              ;; type analysis
               ))
   (passes rule))
