@@ -1,13 +1,16 @@
 #lang racket/base
 
-(require racket/match)
-(require racket/list)
-(require "./ast.rkt")
-(require "./egraph.rkt")
-
+(require racket/match
+         racket/list
+         "ast.rkt"
+         "type.rkt")
 (provide (all-defined-out))
 
+;; atoms
 (struct core-atom (fun args) #:transparent)
+(struct core-value-eq (lhs rhs) #:transparent)
+
+;; actions
 (struct core-let-atom-action (var fun args) #:transparent)
 (struct core-let-val-action (var val) #:transparent)
 (struct core-set-action (fun args expr) #:transparent)
@@ -17,8 +20,10 @@
 (struct core-actions (actions) #:transparent)
 (struct core-rule (query actions) #:transparent)
 
+;; constant
+(define false-atom (core-atom False '()))
 
-;; compilation
+;; lowering to the core
 
 ;; constructor takes function name, args, and output argument
 ;; and returns the constructed object
@@ -36,7 +41,6 @@
                        (cons o atoms))]
 
     [_ (cons e '())]))
-
 
 (define (flatten-query-expr e)
   (flatten-expr-generic
@@ -59,7 +63,7 @@
             [lhs-var (car flattened-lhs)]
             [rhs-var (car flattened-rhs)]
             [atoms (append (append (cdr flattened-lhs) (cdr flattened-rhs))
-                           (list (core-atom 'value-eq (list lhs-var rhs-var))))])
+                           (list (core-value-eq lhs-var rhs-var)))])
        atoms)]
     [_ (cdr (flatten-query-expr a))]))
 
@@ -94,3 +98,69 @@
 (define (flatten-rule rule)
   (core-rule (flatten-query (rule-query rule))
              (flatten-actions (rule-actions rule))))
+
+;; substitution
+(define (subst-core-atom atom v e)
+  (define (replace arg) (if (equal? arg v) e arg))
+  (match atom
+    [(core-atom fun args)
+     (core-atom fun (map replace args))]
+    [(core-value-eq lhs rhs)
+     (core-value-eq (replace lhs) (replace rhs))]))
+
+(define (subst-core-action action v e)
+  (define (replace arg) (if (equal? arg v) e arg))
+  (match action
+    [(core-let-atom-action var fun args)
+     (when (equal? var v) (error "let-bound vars conflict"))
+     (core-let-atom-action var fun (map replace args))]
+    [(core-let-val-action var val)
+     (when (equal? var v) (error "let-bound vars conflict"))
+     (core-let-val-action var (replace val))]
+    [(core-set-action fun args expr)
+     (core-set-action fun (map replace args) (replace expr))]
+    [(core-union-action v1 v2)
+     (core-union-action (replace v1) (replace v2))]))
+
+
+;; canonicalize query
+(define (canonicalize-value-eq rule)
+  (let loop ([rule rule])
+    (match-define
+      (core-rule (core-query atoms)
+                 (core-actions actions))
+      rule)
+
+    (define core-value-eq-atom (findf core-value-eq? atoms))
+    (if core-value-eq-atom
+        (match-let ([(core-value-eq lhs rhs) core-value-eq-atom])
+          (define (go v e)
+            (let* ([atoms+ (remove* (list (core-value-eq e e))
+                                    (map (lambda (atom) (subst-core-atom atom v e)) atoms))]
+                   [actions+ (map (lambda (action) (subst-core-action action v e)) actions)])
+              (core-rule (core-query atoms+) (core-actions actions+))))
+
+          (define rule+
+            (cond [(equal? lhs rhs) ; (= x x): remove the atom
+                   (let ([atoms+ (remove core-value-eq-atom atoms)])
+                     (core-rule (core-query atoms+)) (core-actions actions))]
+                  [(symbol? lhs) (go lhs rhs)] ; (= x y) where x is a symbol: subst x y
+                  [(symbol? rhs) (go rhs lhs)] ; (= x y) where y is a symbol: subst y x
+                  [(and (literal? lhs) ; (= l1 l2) where (!= l1 l2): replace with false
+                        (literal? rhs))
+                   (let ([index (index-of atoms core-value-eq-atom)])
+                     (list-set atoms index false-atom))]))
+
+          (loop rule+))
+        rule)))
+
+;; TODO show core rules
+(define (rcompose . args)
+  (apply compose (reverse args)))
+
+(define (compile rule egraph)
+  (define passes
+    (rcompose flatten-rule
+              canonicalize-value-eq
+              ))
+  (passes rule))

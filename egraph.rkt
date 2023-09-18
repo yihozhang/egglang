@@ -1,13 +1,13 @@
 #lang racket/base
 
-(provide current-egraph
-         current-ruleset
-         register-function
-         register-sort
-         register-rule
-         egraph-rulesets)
+(provide current-egraph current-ruleset
+         register-function register-sort register-rule
+         egraph-functions egraph-sorts egraph-rulesets
+         run1)
 (require data/gvector
-         racket/function)
+         racket/function
+         "./core.rkt"
+         "./ast.rkt")
 
 (struct egraph
   (functions
@@ -31,8 +31,8 @@
 
 (define (register-rule egraph rule #:ruleset ruleset)
   (define rulesets (egraph-rulesets egraph))
-  (define rs (hash-ref! rulesets ruleset (thunk (make-gvector))))
-  (gvector-add! rs rule))
+  (define rules (hash-ref! rulesets ruleset (thunk (make-gvector))))
+  (gvector-add! rules rule))
 
 (struct table
   (entries))
@@ -43,3 +43,9 @@
 (define current-egraph (make-parameter (make-egraph)))
 
 (define current-ruleset (make-parameter 'main))
+
+(define (run1 egraph ruleset)
+  (define rules (hash-ref (egraph-rulesets egraph) ruleset))
+  (define compiled-rules (for/list ([rule (in-gvector rules)]) (compile rule egraph)))
+  compiled-rules
+  )
