@@ -1,10 +1,15 @@
 #lang racket/base
 
-(require racket/match)
+(require racket/match data/union-find)
 
 (provide i64 u64 unit semilattice sort
          show-base-type base-type? literal?
-         function show-function function-name False)
+         function show-function function-name
+         function-input-types function-output-type
+         function-arity
+         new-value! merge-fn!
+         canonicalize
+         False)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; base types
@@ -31,6 +36,21 @@
     ['u64 'u64]
     [(sort name) `(sort ,name)]))
 
+(define (new-value! type)
+  (cond [(sort? type)        (uf-new (gensym (sort-name type)))]
+        [(semilattice? type) (semilattice-bot type)]
+        [else (raise (format "no default value for ~a" type))]))
+
+(define (merge-fn! type vals)
+  (cond [(sort? type)        (foldl uf-union! (car vals) (cdr vals))
+                             (uf-find (car vals))]
+        [(semilattice? type) (foldl (semilattice-join type) (car vals) (cdr vals))]
+        [else (raise (format "merge function is not supported for ~a" type))]))
+
+(define (canonicalize type val)
+  (cond [(sort? type) (uf-find val)]
+        [else val]))
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; functions
 
@@ -49,5 +69,7 @@
   (define out (cdr function-types))
   `(function (,name ,@(map show-base-type in)) ,(show-base-type out)))
 
-
+(define function-input-types (compose car function-types))
+(define function-output-type (compose cdr function-types))
+(define function-arity (compose add1 length function-input-types))
 (define min-nat (semilattice 'min-nat u64 0 +))

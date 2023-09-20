@@ -5,7 +5,6 @@
          "type.rkt")
 
 (provide (all-defined-out))
-(provide (all-defined-out))
 
 ;; macros for making functions, rules, atoms
 (define-syntax make-atom

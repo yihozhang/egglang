@@ -6,26 +6,14 @@
 (sort S)
 
 (function (add S S) S)
-
-
-; (define (R)
-;   (rule
-;    ([= ab (add a b)]
-;     [= r1 (add ab c )])
-;    ([let ab (add b c)]
-;     [let r2 (add a ab)]
-;     [union r1 r2])))
-
-(define (R)
-  (rule
-   ([= r r])
-   ([let r (add b c)]
-    [let r (add r r)]
-    [let r (add r r)]
-    [union r1 r2])))
-(ruleset main
-         (R))
+(function (num i64) S)
 
 (require "egraph.rkt")
+(require "macros.rkt")
 
-(run1 (current-egraph) 'main)
+(rule ()
+      ((let x (add (num 1) (num 2)))
+       (let y (add (num 2) (num 1)))
+       (union x y)
+       ))
+(run1 (current-egraph) (current-ruleset))
