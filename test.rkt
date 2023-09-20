@@ -30,3 +30,9 @@
 
 (for ([i (in-range 8)])
   (time (run1)))
+; (require profile)
+; (require racket/function)
+; (profile-thunk (thunk (for ([i (in-range 8)])
+;                         (time (run1)))))
+
+(table-length (hash-ref (egraph-functions (current-egraph)) add))

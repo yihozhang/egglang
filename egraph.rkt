@@ -4,7 +4,9 @@
          register-function register-sort register-rule
          egraph-functions egraph-sorts egraph-rulesets
          make-egraph show-egraph
-         run1 run-action!)
+         run1 run-action!
+         table-length ;; TODO: export table-related APIs
+         )
 (require data/gvector
          data/bit-vector
          racket/set
@@ -32,10 +34,10 @@
 
 (define (show-egraph egraph)
   (define function-asts
-    (apply append
-           (for/list ([(fun table) (in-hash (egraph-functions egraph))])
-             (cons (show-function fun)
-                   (show-table table)))))
+    (append*
+     (for/list ([(fun table) (in-hash (egraph-functions egraph))])
+       (cons (show-function fun)
+             (show-table table)))))
   (define sort-asts
     (for/list ([sort (in-gvector (egraph-sorts egraph))])
       (show-base-type sort)))
@@ -157,7 +159,7 @@
                          ))
             (go egraph (cdr atoms) m+))
 
-          (apply append (map bound-and-proceed result)))))
+          (append* (map bound-and-proceed result)))))
 
   (go egraph (core-query-atoms query) '()))
 
@@ -200,6 +202,40 @@
                                 (list (function-output-type fun))))
       (define update-count 0)
       (hash-update! functions fun
+                    ; (lambda (table)
+                    ;   (define tab-list (table->list table))
+                    ;   ;; canonicalize every tuple
+                    ;   (for ([tuple tab-list])
+                    ;     (define new-tuple (map canonicalize full-type tuple))
+                    ;     (unless (equal? new-tuple tuple)
+                    ;       (table-remove! table tuple)
+                    ;       (table-append! table new-tuple))
+                    ;     )
+
+                    ;   ;; resolve conflicts
+                    ;   (define key-index
+                    ;     (let* ([sig (make-bit-vector arity #t)]
+                    ;            [_ (bit-vector-set! sig (sub1 arity) #f)])
+                    ;       (get-index! table sig)))
+                    ;   (define otype (function-output-type fun))
+                    ;   (define-values (to-adds to-removes)
+                    ;     (for/fold ([to-adds '()]
+                    ;                [to-removes '()])
+                    ;               ([(key ids) (in-hash (index-hash key-index))]
+                    ;                #:when (> (set-count ids) 1))
+                    ;       (define old-tuples (set-map ids (curry table-get-by-id table)))
+                    ;       (define old-vals (map last old-tuples))
+                    ;       (define new-out-val (merge-fn! otype old-vals))
+                    ;       (define tuple (list-set (first old-tuples) (sub1 arity) new-out-val))
+                    ;       (values (cons tuple to-adds) (append old-tuples to-removes))
+                    ;       ))
+                    ;   (for-each (curry table-append! table) to-adds)
+                    ;   (for-each (curry table-remove! table) to-removes)
+
+                    ;   (define count (- (length to-removes) (length to-adds)))
+                    ;   (set! update-count (+ update-count count))
+
+                    ;   table)
                     (lambda (table)
                       (define tab-list (table->list table))
                       (define canon-tab-list
@@ -225,7 +261,9 @@
                           (sub1 len)))
 
                       (set! update-count (+ update-count count))
-                      new-table))
+                      new-table)
+
+                    )
       update-count))
   (let rebuild ([count 0])
     (define new (rebuild-once))
@@ -318,7 +356,11 @@
 
   (define indexes (table-indexes table))
   (for ([(sig index) (in-hash indexes)])
-    (index-remove! index tuple)))
+    (index-remove! index tuple id)))
+
+(define (table-length table)
+  (define index (get-lookup-index table))
+  (hash-count (index-hash index)))
 
 (define (table->list table)
   (define index (get-lookup-index table))
@@ -326,10 +368,14 @@
 
 ;; Below are internal functions to table
 
+(define (table-get-by-id table id)
+  (gvector-ref (table-buffer table) id))
+
 (define (get-id-from-tuple table tuple)
   (define lookup-index (get-lookup-index table))
   (define ids (index-ref lookup-index tuple))
-  (when (> (set-count ids) 1) (raise "Set semantics is violated"))
+
+  ; (when (> (set-count ids) 1) (raise "Set semantics is violated"))
   (set-first ids))
 
 (define (get-lookup-index table)
@@ -343,10 +389,10 @@
   (define (create-index)
     (define lookup-index (get-lookup-index table))
     (define hash (make-hash))
-    (for* ([(tuple ids) (in-index lookup-index)]
-           #:do [(when (> (set-count ids) 1)
-                   (raise "Set semantics is violated"))]
-           [id (in-set ids)])
+    (for ([(tuple ids) (in-index lookup-index)])
+      (when (> (set-count ids) 1)
+        (raise "Set semantics is violated"))
+      (define id (set-first ids))
       (set-add! (hash-ref! hash
                            (apply-sig sig tuple)
                            (thunk (mutable-set)))
@@ -376,11 +422,15 @@
   (define ids (hash-ref! hash pat (thunk (mutable-set))))
   (set-add! ids id))
 
-(define (index-remove! index tuple)
+(define (index-remove! index tuple id)
   (define hash (index-hash index))
   (define sig (index-sig index))
   (define pat (apply-sig sig tuple))
-  (hash-remove! hash pat))
+  (define ids (hash-ref hash pat))
+  (set-remove! ids id)
+  (when (zero? (set-count ids))
+    (hash-remove! hash pat)
+    ))
 
 (define (index-keys index)
   (define hash (index-hash index))
