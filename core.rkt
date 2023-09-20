@@ -95,7 +95,8 @@
                   [(cons e+ expr-action) (map flatten-action-expr e)])
        (append args-actions
                (list expr-action)
-               (list (core-set-action fun args+ e+))))]))
+               (list (core-set-action fun args+ e+))))]
+    [_ (cdr (flatten-action-expr a))]))
 
 (define (flatten-actions as)
   (define actions (actions-actions as))

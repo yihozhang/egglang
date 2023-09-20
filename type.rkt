@@ -1,10 +1,14 @@
 #lang racket/base
 
-(require racket/match data/union-find)
+(require racket/match
+         "union-find.rkt")
 
-(provide i64 u64 unit semilattice sort
-         show-base-type base-type? literal?
-         function show-function function-name
+(provide i64 u64 unit
+         semilattice
+         sort
+         show-base-type base-type-name base-type? literal?
+         (struct-out function)
+         function? show-function function-name
          function-input-types function-output-type
          function-arity
          new-value! merge-fn!
@@ -36,8 +40,16 @@
     ['u64 'u64]
     [(sort name) `(sort ,name)]))
 
+(define (base-type-name type)
+  (match type
+    [(semilattice name dom bot join) name]
+    ['i64 'i64]
+    ['u64 'u64]
+    [(sort name) name]))
+
+
 (define (new-value! type)
-  (cond [(sort? type)        (uf-new (gensym (sort-name type)))]
+  (cond [(sort? type)        (uf-make-set)]
         [(semilattice? type) (semilattice-bot type)]
         [else (raise (format "no default value for ~a" type))]))
 
@@ -65,9 +77,9 @@
 
 (define (show-function func)
   (define name (function-name func))
-  (define in (car function-types))
-  (define out (cdr function-types))
-  `(function (,name ,@(map show-base-type in)) ,(show-base-type out)))
+  (define in (function-input-types func))
+  (define out (function-output-type func))
+  `(function (,name ,@(map base-type-name in)) ,(base-type-name out)))
 
 (define function-input-types (compose car function-types))
 (define function-output-type (compose cdr function-types))

@@ -3,17 +3,18 @@
 (provide current-egraph current-ruleset
          register-function register-sort register-rule
          egraph-functions egraph-sorts egraph-rulesets
-         run1)
+         make-egraph show-egraph
+         run1 run-action!)
 (require data/gvector
          data/bit-vector
          racket/set
-         data/union-find ;; one day we are going to use our own
          racket/function
          racket/match
          racket/list
          "core.rkt"
          "ast.rkt"
-         "type.rkt")
+         "type.rkt"
+         "union-find.rkt")
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; egraph
@@ -29,13 +30,25 @@
    (make-gvector)
    (make-hash)))
 
+(define (show-egraph egraph)
+  (define function-asts
+    (apply append
+           (for/list ([(fun table) (in-hash (egraph-functions egraph))])
+             (cons (show-function fun)
+                   (show-table table)))))
+  (define sort-asts
+    (for/list ([sort (in-gvector (egraph-sorts egraph))])
+      (show-base-type sort)))
+  (append sort-asts function-asts))
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Functions
 ;; Registers a function
 (define (register-function egraph function)
   (define functions (egraph-functions egraph))
   (define arity (function-arity function))
-  (hash-set! functions function (make-table arity)))
+  (define name (function-name function))
+  (hash-set! functions function (make-table name arity)))
 
 ;; Returns a table corresponding to the table
 (define (lookup-function egraph function)
@@ -92,44 +105,90 @@
 
 (define current-ruleset (make-parameter 'main))
 
-(define (run1 egraph ruleset)
+(define (run-action! action [egraph (current-egraph)])
+  (define as (actions (list action)))
+  (define core-actions (flatten-actions as))
+  (run-core-actions! egraph core-actions))
+
+(define (run1 [ruleset (current-ruleset)] [egraph (current-egraph)])
   (define rules (hash-ref (egraph-rulesets egraph) ruleset))
   (define compiled-rules (for/list ([rule (in-gvector rules)]) (compile rule egraph)))
 
   ;; search
-  (define matches (map (curry run-query egraph)
-                       (map core-rule-query compiled-rules)))
-  ;; apply
-  (for ([rule (in-list compiled-rules)]
-        [ms (in-list matches)])
-    (define actions (core-rule-actions rule))
-    (for ([m ms])
-      (run-core-actions! egraph actions m)))
-  (rebuild egraph))
+  (define matches (time (map (curry run-core-query egraph)
+                             (map core-rule-query compiled-rules))))
 
-(define (run-query egraph query) '(()))
+  ;; apply
+  (time (for ([rule (in-list compiled-rules)]
+              [ms (in-list matches)])
+          (define actions (core-rule-actions rule))
+          (for ([m ms])
+            (run-core-actions! egraph actions m))))
+
+  ;; rebuild
+  (time (rebuild egraph))
+  )
+
+(define (run-core-query egraph query)
+  (define (go egraph atoms m)
+    (if (null? atoms)
+        (list m)
+        (let* ([atom (car atoms)]
+               [args (core-atom-args atom)]
+               [eval-arg (lambda (arg) (if (symbol? arg)
+                                           (let ([val (assoc arg m)])
+                                             (and val (cdr val)))
+                                           arg))]
+               [pat (map eval-arg args)]
+               [table (lookup-function egraph (core-atom-fun atom))]
+               [result (table-get table pat #:full-tuple? #t)])
+
+          (define (bound-and-proceed tuple)
+            (define m+ (for/fold ([m m])
+                                 ([arg args]
+                                  [b pat]
+                                  [v tuple])
+                         (if b
+                             ;; if value at respective position is instantiated,
+                             ;; it must have been bound in the match
+                             m
+                             ;; arg must be a symbol
+                             (cons (cons arg v) m))
+                         ))
+            (go egraph (cdr atoms) m+))
+
+          (apply append (map bound-and-proceed result)))))
+
+  (go egraph (core-query-atoms query) '()))
+
 (define (run-core-actions! egraph actions [m '()])
   (define (eval-arg m arg)
-    (if (symbol? arg) (cdr (assoc arg m)) arg))
+    (if (symbol? arg)
+        (cdr (assoc arg m))
+        arg))
   (let go ([actions (core-actions-actions actions)]
            [m m])
-    (match-define (cons action rest) actions)
-    (match action
-      [(core-let-atom-action var fun args)
-       (define args+ (map (curry eval-arg m) args))
-       (define val (eval!-function egraph fun args+))
-       (define m+ (cons (cons var val) m))
-       (go rest m+)]
-      [(core-let-val-action var val)
-       (define val+ (eval-arg m val))
-       (define m+ (cons (cons var val+) m))
-       (go rest m+)]
-      [(core-set-action fun args expr)
-       (define args+ (map (curry eval-arg m) args))
-       (define expr+ (eval-arg m expr))
-       (set!-function egraph fun args+ expr+)]
-      [(core-union-action v1 v2)
-       (uf-union! (eval-arg m v1) (eval-arg m v2))])))
+    (match actions
+      [(cons action rest)
+       (match action
+         [(core-let-atom-action var fun args)
+          (define args+ (map (curry eval-arg m) args))
+          (define val (cond [(function? fun) (eval!-function egraph fun args+)]
+                            [(procedure? fun) (apply fun args+)]))
+          (define m+ (cons (cons var val) m))
+          (go rest m+)]
+         [(core-let-val-action var val)
+          (define val+ (eval-arg m val))
+          (define m+ (cons (cons var val+) m))
+          (go rest m+)]
+         [(core-set-action fun args expr)
+          (define args+ (map (curry eval-arg m) args))
+          (define expr+ (eval-arg m expr))
+          (set!-function egraph fun args+ expr+)]
+         [(core-union-action v1 v2)
+          (uf-union! (eval-arg m v1) (eval-arg m v2))
+          (void)])]
+      ['() (void)])))
 
 (define (rebuild egraph)
   (define functions (egraph-functions egraph))
@@ -146,20 +205,26 @@
                       (define canon-tab-list
                         (for/list ([tuple tab-list])
                           (map canonicalize full-type tuple)))
-                      (define grouped-by (group-by (lambda (tuple) (drop-right tuple 1)) canon-tab-list))
+                      (define grouped-by
+                        (group-by (lambda (tuple) (drop-right tuple 1)) canon-tab-list))
 
-                      (define new-table (make-table arity))
+                      (define new-table (make-table (table-name table) arity))
+                      (define otype (function-output-type fun))
                       (define count
-                        (for*/sum ([group (in-list grouped-by)]
-                                   [len (in-value (length group))]
-                                   #:when (> len 1))
-                          (define out-vals (map last group))
-                          (define new-out-val (merge-fn! out-vals))
-                          (define tuple (list-set (first group) (sub1 arity) new-out-val))
-                          (table-append! new-table tuple)
-                          (sub1 len)))
-                      (set! update-count (+ update-count count))
+                        (for*/sum ([group (in-list grouped-by)])
+                          (define len (length group))
 
+                          (if (= len 1)
+                              (table-append! new-table (first group))
+                              (let ()
+                                (define out-vals (map last group))
+                                (define new-out-val (merge-fn! otype out-vals))
+                                (define tuple (list-set (first group) (sub1 arity) new-out-val))
+                                (table-append! new-table tuple)))
+
+                          (sub1 len)))
+
+                      (set! update-count (+ update-count count))
                       new-table))
       update-count))
   (let rebuild ([count 0])
@@ -177,6 +242,8 @@
 ;; where #t means it's part of the index
 ;; A pattern is a signature converted to list
 ;; with every #t replaced with an actual value
+
+;; TODO: don't use false for pattern, it is bad
 
 ;; Converts a pattern to a signature
 (define (pattern->sig pat)
@@ -198,13 +265,21 @@
 (define (only lst) (match lst [(list e) e]))
 
 (struct table
-  (arity
+  (name
+   arity
    buffer
    indexes))
 
-(define (make-table arity)
+(define (show-table table)
+  (define name (table-name table))
+  (for/list ([tuple (table->list table)])
+    (define-values (args out) (split-at-right tuple 1))
+    `(set (,name ,@args) ,out)))
+
+(define (make-table name arity)
   (define full-sig (make-bit-vector arity #t))
-  (table arity
+  (table name
+         arity
          (make-gvector)
          (make-hash (list (cons full-sig (make-index full-sig))))))
 
@@ -269,10 +344,13 @@
     (define lookup-index (get-lookup-index table))
     (define hash (make-hash))
     (for* ([(tuple ids) (in-index lookup-index)]
-           #:do [(when (> (length ids) 1)
+           #:do [(when (> (set-count ids) 1)
                    (raise "Set semantics is violated"))]
-           [id ids])
-      (hash-set! hash (apply-sig sig tuple) id))
+           [id (in-set ids)])
+      (set-add! (hash-ref! hash
+                           (apply-sig sig tuple)
+                           (thunk (mutable-set)))
+                id))
     (index sig hash))
   (hash-ref! indexes sig create-index))
 
@@ -288,7 +366,7 @@
          (make-hash)))
 
 ;; Takes a pattern, returns all the ids for that pattern
-(define (index-ref index access-pattern [default (set)])
+(define (index-ref index access-pattern [default (thunk (mutable-set))])
   (hash-ref (index-hash index) access-pattern default))
 
 (define (index-add! index tuple id)
