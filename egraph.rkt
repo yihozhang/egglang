@@ -4,7 +4,7 @@
          register-function register-sort register-rule
          egraph-functions egraph-sorts egraph-rulesets
          make-egraph show-egraph
-         run1 run-action!
+         run1 run run-action!
          table-length ;; TODO: export table-related APIs
          )
 (require data/gvector
@@ -117,19 +117,49 @@
   (define compiled-rules (for/list ([rule (in-gvector rules)]) (compile rule egraph)))
 
   ;; search
-  (define matches (time (map (curry run-core-query egraph)
-                             (map core-rule-query compiled-rules))))
+  (define search-start-time (current-milliseconds))
+  (define matches
+    (map (curry run-core-query egraph)
+         (map core-rule-query compiled-rules)))
+
+  (for ([table (in-hash-values (egraph-functions egraph))])
+    (drop-nonessential-indexes! table))
 
   ;; apply
-  (time (for ([rule (in-list compiled-rules)]
-              [ms (in-list matches)])
-          (define actions (core-rule-actions rule))
-          (for ([m ms])
-            (run-core-actions! egraph actions m))))
+  (define apply-start-time (current-milliseconds))
+  (for ([rule (in-list compiled-rules)]
+        [ms (in-list matches)])
+    (define actions (core-rule-actions rule))
+    (for ([m ms])
+      (run-core-actions! egraph actions m)))
 
   ;; rebuild
-  (time (rebuild egraph))
+  (define rebuild-start-time (current-milliseconds))
+  (rebuild egraph)
+  (define rebuild-end-time (current-milliseconds))
+
+  (list (cons 'search (- apply-start-time search-start-time))
+        (cons 'apply (- rebuild-start-time apply-start-time))
+        (cons 'rebuild (- rebuild-end-time rebuild-start-time)))
   )
+
+(define (run n [ruleset (current-ruleset)] [egraph (current-egraph)])
+  (define (combine-report r1 r2)
+    (list (cons 'search (+ (cdr (assoc 'search r1)) (cdr (assoc 'search r2))))
+          (cons 'apply (+ (cdr (assoc 'apply r1)) (cdr (assoc 'apply r2))))
+          (cons 'rebuild (+ (cdr (assoc 'rebuild r1)) (cdr (assoc 'rebuild r2))))
+          ))
+
+  (define initial '((search . 0)
+                    (apply . 0)
+                    (rebuild . 0)))
+
+  (define (do n result)
+    (if (zero? n) result
+        (let ([curr (run1 ruleset egraph)])
+          (do (sub1 n) (combine-report curr result)))))
+
+  (do n initial))
 
 (define (run-core-query egraph query)
   (define (go egraph atoms m)
@@ -202,6 +232,8 @@
                                 (list (function-output-type fun))))
       (define update-count 0)
       (hash-update! functions fun
+                    ;; TODO: this is slower than just throwing away the old database
+                    ;; and build a new one.
                     ; (lambda (table)
                     ;   (define tab-list (table->list table))
                     ;   ;; canonicalize every tuple
@@ -229,13 +261,14 @@
                     ;       (define tuple (list-set (first old-tuples) (sub1 arity) new-out-val))
                     ;       (values (cons tuple to-adds) (append old-tuples to-removes))
                     ;       ))
-                    ;   (for-each (curry table-append! table) to-adds)
                     ;   (for-each (curry table-remove! table) to-removes)
+                    ;   (for-each (curry table-append! table) to-adds)
 
                     ;   (define count (- (length to-removes) (length to-adds)))
                     ;   (set! update-count (+ update-count count))
 
                     ;   table)
+
                     (lambda (table)
                       (define tab-list (table->list table))
                       (define canon-tab-list
@@ -334,7 +367,7 @@
   (define ids (index-ref index access-pattern))
 
   (define buffer (table-buffer table))
-  (for/list ([id ids])
+  (for/list ([id (in-set ids)])
     (define tuple (gvector-ref buffer id))
     (if full-tuple?
         tuple
@@ -366,6 +399,14 @@
   (define index (get-lookup-index table))
   (index-keys index))
 
+(define (drop-nonessential-indexes! table)
+  (define full-sig (table-full-sig table))
+  (define indexes (table-indexes table))
+  (for ([sig (in-list (hash-keys indexes))]
+        #:when (not (equal? sig full-sig)))
+    (hash-remove! indexes sig)
+    ))
+
 ;; Below are internal functions to table
 
 (define (table-get-by-id table id)
@@ -375,12 +416,17 @@
   (define lookup-index (get-lookup-index table))
   (define ids (index-ref lookup-index tuple))
 
-  ; (when (> (set-count ids) 1) (raise "Set semantics is violated"))
-  (set-first ids))
+  (when (> (set-count ids) 1) (raise "Set semantics is violated"))
+  (if (set-empty? ids) #f
+      (set-first ids)
+      ))
+
+(define (table-full-sig table)
+  (define arity (table-arity table))
+  (make-bit-vector arity #t))
 
 (define (get-lookup-index table)
-  (define arity (table-arity table))
-  (define full-sig (make-bit-vector arity #t))
+  (define full-sig (table-full-sig table))
   ;; such an index should always exist
   (get-index! table full-sig))
 
