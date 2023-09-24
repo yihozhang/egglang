@@ -1,5 +1,6 @@
 #lang racket/base
 
+(require (for-syntax racket/base))
 (require "egraph.rkt"
          "ast.rkt"
          "type.rkt")
@@ -72,3 +73,10 @@
      (define name (let* ([f (function (quote name) (cons (list inputs ...) output))]
                          [_ (register-function (current-egraph) f)])
                     f))]))
+
+(define-syntax make-rewrite
+  (syntax-rules (:when)
+    [(make-rewrite lhs rhs :when (cond ...))
+     '(rule (lhs cond ...) ((set lhs rhs)))]
+    [(make-rewrite lhs rhs)
+     (make-rewrite lhs rhs :when ())]))

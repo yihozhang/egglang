@@ -8,7 +8,8 @@
 (provide (rename-out [make-rule rule]
                      [make-sort sort]
                      [make-function function]
-                     [make-ruleset ruleset])
+                     [make-ruleset ruleset]
+                     [make-rewrite rewrite])
          show-function show-rule
          (all-from-out "core.rkt")
          (except-out (all-from-out "type.rkt") sort function))
