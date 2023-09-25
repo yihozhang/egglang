@@ -1,6 +1,6 @@
 #lang racket/base
 
-(require "./lib.rkt")
+(require "./src/lib.rkt")
 
 ;; sort
 (sort S)
@@ -8,8 +8,8 @@
 (function (add S S) S)
 (function (var i64) S)
 
-(require "egraph.rkt")
-(require "macros.rkt")
+(require "./src/egraph.rkt")
+(require "./src/macros.rkt")
 
 (run-action! (make-action
               (add (var 0) (add (var 1)
