@@ -7,10 +7,18 @@
          semilattice
          sort
          show-base-type base-type-name base-type? literal?
-         (struct-out function)
+         ;; function related
+         function
          function? show-function function-name
          function-input-types function-output-type
          function-arity
+         ;; computed function related
+         computed-function
+         computed-function?
+         computed-function-run
+         ;; utility
+         head-name
+         ;; make-set and merge
          new-value! merge-fn!
          canonicalize
          False)
@@ -77,7 +85,20 @@
    )
   #:transparent)
 
+(struct computed-function
+  (name
+   run)
+  #:transparent)
+
+(define (head-name head)
+  (cond ([function? head] (function-name head))
+        ([computed-function? head] (computed-function-name head))))
+
 (define False (function 'False (cons '() unit)))
+
+(define (show-computed-function func)
+  (define name (computed-function-name func))
+  `(computed ,name))
 
 (define (show-function func)
   (define name (function-name func))

@@ -40,7 +40,7 @@
                             [children-args (map car flattened)]
                             [children-atoms (map cdr flattened)]
 
-                            [o (gensym (function-name fun))]
+                            [o (gensym (head-name fun))]
                             [atom (constructor fun children-args o)]
 
                             [atoms (foldr append (list atom) children-atoms)])

@@ -116,7 +116,6 @@
 (define (run1 [ruleset (current-ruleset)] [egraph (current-egraph)])
   (define rules (hash-ref (egraph-rulesets egraph) ruleset))
   (define compiled-rules (for/list ([rule (in-gvector rules)]) (compile rule egraph)))
-
   ;; search
   (define search-start-time (current-milliseconds))
   (define matches
@@ -176,26 +175,42 @@
                                              (and val (cdr val)))
                                            arg))]
                [pat (map eval-arg args)]
-               [table (lookup-function egraph (core-atom-fun atom))]
-               [result (table-get table pat #:full-tuple? #t)])
+               [fun (core-atom-fun atom)])
+          (cond [(function? fun)
+                 ; function case
+                 (define table (lookup-function egraph (core-atom-fun atom)))
+                 (define result (table-get table pat #:full-tuple? #t))
 
-          (define (bound-and-proceed tuple)
-            (define-values (m+ valid?)
-              (for/fold ([m m] [valid? #t])
-                        ([arg args]
-                         [b pat]
-                         [v tuple]
-                         #:break (not valid?))
-                (define bound-val (assoc arg m))
-                (cond [(not bound-val) (values (cons (cons arg v) m) #t)]
-                      [(equal? (cdr bound-val) v) (values m #t)]
-                      [else (values m #f)])
-                ))
-            (if valid?
-                (go egraph (cdr atoms) m+)
-                '()))
+                 (define (bound-and-proceed tuple)
+                   (define-values (m+ valid?)
+                     ;  `valid?` is used to handle non-linear patterns
+                     (for/fold ([m m] [valid? #t])
+                               ([arg args]
+                                [instantiated pat]
+                                [tuple-val tuple]
+                                #:break (not valid?))
+                       (cond [(not instantiated) (values (cons (cons arg tuple-val) m) #t)]
+                             [(equal? instantiated tuple-val) (values m #t)]
+                             [else (values m #f)])
+                       ))
+                   (if valid?
+                       (go egraph (cdr atoms) m+)
+                       '()))
 
-          (append* (map bound-and-proceed result)))))
+                 (append* (map bound-and-proceed result))]
+                [(computed-function? fun)
+                 ;; primitive case
+                 (define-values (in-pats out-pats) (split-at-right pat 1))
+                 (define out-pat (only out-pats))
+                 ;; unless all arguments at an input position can be instantiated
+                 (unless (andmap identity in-pats)
+                   (raise (format "Cannot execute query as ~a cannot be fully instantiated" atom)))
+                 (define computed-val (apply (computed-function-run fun) in-pats))
+                 (cond [(not out-pat) (go egraph (cdr atoms) (cons (cons (last args) computed-val) m))]
+                       [(equal? out-pat computed-val) (go egraph (cdr atoms) m)]
+                       [else '()])]
+                [else (raise (format "unsupported atom ~a" atom))]
+                ))))
 
   (go egraph (core-query-atoms query) '()))
 
@@ -212,7 +227,7 @@
          [(core-let-atom-action var fun args)
           (define args+ (map (curry eval-arg m) args))
           (define val (cond [(function? fun) (eval!-function egraph fun args+)]
-                            [(procedure? fun) (apply fun args+)]))
+                            [(computed-function? fun) (apply (computed-function-run fun) args+)]))
           (define m+ (cons (cons var val) m))
           (go rest m+)]
          [(core-let-val-action var val)
@@ -364,7 +379,7 @@
   (define name (table-name table))
   (for/list ([tuple (table->list table)])
     (define-values (args out) (split-at-right tuple 1))
-    `(set (,name ,@args) ,out)))
+    `(set (,name ,@args) ,@out)))
 
 (define (make-table name arity)
   (define full-sig (make-bit-vector arity #t))

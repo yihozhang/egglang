@@ -23,9 +23,9 @@
   (define (show-expr expr)
     (cond
       [(call? expr)
-       (define func-name (function-name (call-fun expr)))
+       (define name (head-name (call-fun expr)))
        (define args (call-args expr))
-       `(,func-name ,@(map show-expr args))]
+       `(,name ,@(map show-expr args))]
       [#t expr]))
 
   (define (show-query query)

@@ -11,8 +11,8 @@
 (define-syntax make-atom
   (syntax-rules (=)
     [(make-atom (= lhs rhs))
-     (value-eq (make-atom lhs)
-               (make-atom rhs))]
+     (value-eq (make-expr lhs)
+               (make-expr rhs))]
     [(make-atom expr) (make-expr expr)]))
 
 (define-syntax make-query
@@ -20,10 +20,17 @@
     [(make-query (atom ...))
      (query (list (make-atom atom) ...))]))
 
+(define-syntax make-head
+  (syntax-rules ()
+    [(make-head head)
+     (let ([head+ head])
+       (cond [(procedure? head+) (computed-function (quote head) head+)]
+             [(function? head+) head+]))]))
+
 (define-syntax make-expr
   (syntax-rules ()
     [(make-atom (fun args ...))
-     (call fun (list (make-atom args) ...))]
+     (call (make-head fun) (list (make-atom args) ...))]
     ;; TODO: we need to make sure that a is a symbol or number etc
     [(make-atom a) (quote a)]))
 
