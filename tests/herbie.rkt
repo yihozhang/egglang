@@ -85,10 +85,10 @@
 ;; - There exists a hi interval, in which case it must be smaller than 0
 ;; This assumes that intervals are well-formed: lo <= hi at all times.
 (rule ((= l (lo e))
-       (= (> l 0) #t))
+       (> l 0))
       ((non-zero e)))
 (rule ((= h (hi e))
-       (= (< h 0) #t))
+       (< h 0))
       ((non-zero e)))
 
 (rule ((= e (Num ve)))
@@ -491,3 +491,4 @@
 (assert (= (print-size Div) 197))
 (assert (= (print-size Sqrt) 1))
 (assert (= (print-size Num) 12))
+(assert (= (print-size non-zero) 8))

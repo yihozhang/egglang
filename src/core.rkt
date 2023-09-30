@@ -13,6 +13,7 @@
 
 ;; atoms
 (struct core-atom (fun args) #:transparent)
+(struct core-check (arg) #:transparent)
 (struct core-value-eq (lhs rhs) #:transparent)
 
 ;; actions
@@ -63,15 +64,16 @@
 
 (define (flatten-atom a)
   (match a
-    [(value-eq lhs rhs)
-     (let* ([flattened-lhs (flatten-query-expr lhs)]
-            [flattened-rhs (flatten-query-expr rhs)]
-            [lhs-var (car flattened-lhs)]
-            [rhs-var (car flattened-rhs)]
-            [atoms (append (append (cdr flattened-lhs) (cdr flattened-rhs))
-                           (list (core-value-eq lhs-var rhs-var)))])
-       atoms)]
-    [_ (cdr (flatten-query-expr a))]))
+    [(value-eq lhs rhs) (let* ([flattened-lhs (flatten-query-expr lhs)]
+                               [flattened-rhs (flatten-query-expr rhs)]
+                               [lhs-var       (car flattened-lhs)]
+                               [rhs-var       (car flattened-rhs)]
+                               [atoms         (append (cdr flattened-lhs) (cdr flattened-rhs)
+                                                      (list (core-value-eq lhs-var rhs-var)))])
+                          atoms)]
+    [_                  (match-let ([(cons v atoms) (flatten-query-expr a)])
+                          ;; check that the expression produces non-#f value
+                          (append atoms (list (core-check v))))]))
 
 (define (flatten-query q)
   (define atoms-list (map flatten-atom (query-atoms q)))
@@ -115,7 +117,8 @@
     [(core-atom fun args)
      (core-atom fun (map replace args))]
     [(core-value-eq lhs rhs)
-     (core-value-eq (replace lhs) (replace rhs))]))
+     (core-value-eq (replace lhs) (replace rhs))]
+    [(core-check arg) (core-check (replace arg))]))
 
 (define (subst-core-action v e action #:check-conflict? [check-conflict? #t])
   (define (replace arg) (if (equal? arg v) e arg))
@@ -135,7 +138,8 @@
 (define (collect-vars-core-atom atom)
   (match atom
     [(core-atom fun args) (filter symbol? args)]
-    [(core-value-eq lhs rhs) (filter symbol? (list lhs rhs))]))
+    [(core-value-eq lhs rhs) (filter symbol? (list lhs rhs))]
+    [(core-check arg) (filter symbol? (list arg))]))
 
 ;; Conflict-avoiding Renaming
 (define (rename-rule rule)

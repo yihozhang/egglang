@@ -179,51 +179,56 @@
 
 (define (run-core-query egraph query)
   (define (go egraph atoms m)
-    (if (null? atoms)
-        (list m)
-        (let* ([atom (car atoms)]
-               [args (core-atom-args atom)]
-               [eval-arg (lambda (arg) (if (symbol? arg)
-                                           (let ([val (assoc arg m)])
-                                             (and val (cdr val)))
-                                           arg))]
-               [pat (map eval-arg args)]
-               [fun (core-atom-fun atom)])
-          (cond [(function? fun)
-                 ; function case
-                 (define table (lookup-function egraph (core-atom-fun atom)))
-                 (define result (table-get table pat #:full-tuple? #t))
-                 (define (bound-and-proceed tuple)
-                   (define-values (m+ valid?)
-                     ;  `valid?` is used to handle non-linear patterns
-                     (for/fold ([m m] [valid? #t])
-                               ([arg args]
-                                [tuple-val tuple]
-                                #:when (symbol? arg)
-                                #:break (not valid?))
-                       (define instantiated (assoc arg m))
-                       (cond [(not instantiated) (values (cons (cons arg tuple-val) m) #t)]
-                             [(equal? (cdr instantiated) tuple-val) (values m #t)]
-                             [else (values m #f)])
-                       ))
-                   (if valid?
-                       (go egraph (cdr atoms) m+)
-                       '()))
+    (define (eval-arg arg) (if (symbol? arg)
+                               (let ([val (assoc arg m)])
+                                 (and val (cdr val)))
+                               arg))
+    (match atoms
+      ['() (list m)]
+      ;; core-check case
+      [(cons (core-check arg) atoms+)
+       (if (eval-arg arg)
+           (go egraph atoms+ m)
+           '())]
+      ;; core-atom case
+      [(cons (core-atom fun args) atoms+)
+       (let ([pat (map eval-arg args)])
+         (cond [(function? fun)
+                ; function case
+                (define table (lookup-function egraph fun))
+                (define result (table-get table pat #:full-tuple? #t))
+                (define (bound-and-proceed tuple)
+                  (define-values (m+ valid?)
+                    ;  `valid?` is used to handle non-linear patterns
+                    (for/fold ([m m] [valid? #t])
+                              ([arg args]
+                               [tuple-val tuple]
+                               #:when (symbol? arg)
+                               #:break (not valid?))
+                      (define instantiated (assoc arg m))
+                      (cond [(not instantiated) (values (cons (cons arg tuple-val) m) #t)]
+                            [(equal? (cdr instantiated) tuple-val) (values m #t)]
+                            [else (values m #f)])
+                      ))
+                  (if valid?
+                      (go egraph atoms+ m+)
+                      '()))
 
-                 (append* (map bound-and-proceed result))]
-                [(computed-function? fun)
-                 ;; primitive case
-                 (define-values (in-pats out-pats) (split-at-right pat 1))
-                 (define out-pat (only out-pats))
-                 ;; unless all arguments at an input position can be instantiated
-                 (unless (andmap identity in-pats)
-                   (raise (format "Cannot execute query as ~a cannot be fully instantiated" atom)))
-                 (define computed-val (apply (computed-function-run fun) in-pats))
-                 (cond [(not out-pat) (go egraph (cdr atoms) (cons (cons (last args) computed-val) m))]
-                       [(equal? out-pat computed-val) (go egraph (cdr atoms) m)]
-                       [else '()])]
-                [else (raise (format "unsupported atom ~a" atom))]
-                ))))
+                (append* (map bound-and-proceed result))]
+               [(computed-function? fun)
+                ;; primitive case
+                (define-values (in-pats out-pats) (split-at-right pat 1))
+                (define out-pat (only out-pats))
+                ;; unless all arguments at an input position can be instantiated
+                (unless (andmap identity in-pats)
+                  (raise (format "Cannot execute query as ~a cannot be fully instantiated" (car atoms))))
+                (define computed-val (apply (computed-function-run fun) in-pats))
+                (cond [(not out-pat) (go egraph atoms+ (cons (cons (last args) computed-val) m))]
+                      [(equal? out-pat computed-val) (go egraph atoms+ m)]
+                      [else '()])]
+               [else (raise (format "unsupported atom ~a" (car atoms)))]
+               ))]
+      ))
 
   (go egraph (core-query-atoms query) '()))
 
