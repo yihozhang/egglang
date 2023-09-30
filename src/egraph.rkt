@@ -5,7 +5,7 @@
          egraph-functions egraph-sorts egraph-rulesets
          make-egraph show-egraph
          print-size print-table
-         run1 run run-action!
+         run1 run run-action! run-query
          table-length ;; TODO: export table-related APIs
          )
 (require data/gvector
@@ -71,6 +71,7 @@
         new-val)
       (only (only tuples))))
 
+;; Runs the `set` action on the given function
 (define (set!-function egraph function args new-val)
   (define table (lookup-function egraph function))
   (define access-pattern (append args '(#f)))
@@ -95,10 +96,12 @@
   (define new-tuple (append args (list val)))
   (table-append! table new-tuple))
 
+;; Registers a sort
 (define (register-sort egraph sort)
   (define sorts (egraph-sorts egraph))
   (gvector-add! sorts sort))
 
+;; Registers a rule
 (define (register-rule egraph rule #:ruleset ruleset)
   (define rulesets (egraph-rulesets egraph))
   (define rules (hash-ref! rulesets ruleset (thunk (make-gvector))))
@@ -108,11 +111,21 @@
 
 (define current-ruleset (make-parameter 'main))
 
+;; Runs an action
 (define (run-action! action [egraph (current-egraph)])
   (define as (actions (list action)))
   (define core-actions (flatten-actions as))
   (run-core-actions! egraph core-actions))
 
+(define (run-query query [egraph (current-egraph)])
+  ;; TODO: For now, let's just rebuild the egraph manually
+  ;; but what we really should do is to add a dirty bits to egraphs
+  ;; and rebuild everytime needed
+  (rebuild egraph)
+  (define core-query (compile-query query egraph))
+  (run-core-query egraph core-query))
+
+;; Runs a ruleset for one iteration
 (define (run1 [ruleset (current-ruleset)] [egraph (current-egraph)])
   (define rules (hash-ref (egraph-rulesets egraph) ruleset))
   (define compiled-rules (for/list ([rule (in-gvector rules)]) (compile rule egraph)))
@@ -131,8 +144,8 @@
         [original-rule [in-gvector rules]]
         [ms (in-list matches)])
     (define actions (core-rule-actions rule))
-    ; (unless (zero? (length ms))
-    ;   (displayln (format "Running ~a for ~a times" (show-rule original-rule) (length ms))))
+    (unless (zero? (length ms))
+      (displayln (format "Running ~a for ~a times" (show-rule original-rule) (length ms))))
     (for ([m ms])
       (run-core-actions! egraph actions m)))
 
@@ -180,17 +193,17 @@
                  ; function case
                  (define table (lookup-function egraph (core-atom-fun atom)))
                  (define result (table-get table pat #:full-tuple? #t))
-
                  (define (bound-and-proceed tuple)
                    (define-values (m+ valid?)
                      ;  `valid?` is used to handle non-linear patterns
                      (for/fold ([m m] [valid? #t])
                                ([arg args]
-                                [instantiated pat]
                                 [tuple-val tuple]
+                                #:when (symbol? arg)
                                 #:break (not valid?))
+                       (define instantiated (assoc arg m))
                        (cond [(not instantiated) (values (cons (cons arg tuple-val) m) #t)]
-                             [(equal? instantiated tuple-val) (values m #t)]
+                             [(equal? (cdr instantiated) tuple-val) (values m #t)]
                              [else (values m #f)])
                        ))
                    (if valid?
@@ -227,7 +240,8 @@
          [(core-let-atom-action var fun args)
           (define args+ (map (curry eval-arg m) args))
           (define val (cond [(function? fun) (eval!-function egraph fun args+)]
-                            [(computed-function? fun) (apply (computed-function-run fun) args+)]))
+                            [(computed-function? fun)
+                             (apply (computed-function-run fun) args+)]))
           (define m+ (cons (cons var val) m))
           (go rest m+)]
          [(core-let-val-action var val)
@@ -237,10 +251,11 @@
          [(core-set-action fun args expr)
           (define args+ (map (curry eval-arg m) args))
           (define expr+ (eval-arg m expr))
-          (set!-function egraph fun args+ expr+)]
+          (set!-function egraph fun args+ expr+)
+          (go rest m)]
          [(core-union-action v1 v2)
           (uf-union! (eval-arg m v1) (eval-arg m v2))
-          (void)])]
+          (go rest m)])]
       ['() (void)])))
 
 (define (rebuild egraph)
@@ -379,7 +394,7 @@
   (define name (table-name table))
   (for/list ([tuple (table->list table)])
     (define-values (args out) (split-at-right tuple 1))
-    `(set (,name ,@args) ,@out)))
+    `(set! (,name ,@args) ,@out)))
 
 (define (make-table name arity)
   (define full-sig (make-bit-vector arity #t))

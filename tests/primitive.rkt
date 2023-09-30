@@ -9,7 +9,7 @@
 (rewrite (Sub (Num a) (Num b)) (Num 0) :when ((= (equal? a b) #t)))
 (run-action! (Sub (Num 2) (Num 2)))
 
-; (rewrite (Sub (Num a) (Num b)) (Num (- a b)))
+(rewrite (Sub (Num a) (Num b)) (Num (- a b)))
 (run-action! (Sub (Num 4) (Num 3)))
 (run1)
 

@@ -9,4 +9,6 @@
 
 (run-action! (Sub (Num 1) (Num 2)))
 (run 1)
-(print-table Sub)
+(define result (run-query (= (Sub (Num 1) (Num 2)) (Num 0))))
+(unless (null? result)
+  (error "non-linear rule is applied without respecting equality constraitns"))

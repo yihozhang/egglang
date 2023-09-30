@@ -41,9 +41,10 @@
     (define (show-action action)
       (match action
         [(let-action var expr) `(let ,var ,(show-expr expr))]
-        [(set-action fun args expr) `(set (,(function-name fun) ,@(map show-expr args))
-                                          ,(show-expr expr))]
+        [(set-action fun args expr) `(set! (,(function-name fun) ,@(map show-expr args))
+                                           ,(show-expr expr))]
         [(union-action e1 e2) `(union ,(show-expr e1) ,(show-expr e2))]
+        [_ (show-expr action)]
         ))
     (map show-action actions+))
 

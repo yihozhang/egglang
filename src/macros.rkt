@@ -29,20 +29,20 @@
 
 (define-syntax make-expr
   (syntax-rules ()
-    [(make-atom (fun args ...))
+    [(make-expr (fun args ...))
      (call (make-head fun) (list (make-atom args) ...))]
     ;; TODO: we need to make sure that a is a symbol or number etc
-    [(make-atom a) (quote a)]))
+    [(make-expr a) (quote a)]))
 
 (define-syntax make-action
-  (syntax-rules (let set union)
+  (syntax-rules (let set! union!)
     ;; require v to be a symbol
     [(make-action (let v e)) (let-action (quote v) (make-expr e))]
     ;; require fun to be a symbol
-    [(make-action (set (fun args ...) e)) (set-action fun
-                                                      (list (make-expr args) ...)
-                                                      (make-expr e))]
-    [(make-action (union e1 e2)) (union-action (make-expr e1) (make-expr e2))]
+    [(make-action (set! (fun args ...) e)) (set-action fun
+                                                       (list (make-expr args) ...)
+                                                       (make-expr e))]
+    [(make-action (union! e1 e2)) (union-action (make-expr e1) (make-expr e2))]
     [(make-action e) (make-expr e)]
     ))
 
@@ -80,10 +80,15 @@
                          [_ (register-function (current-egraph) f)])
                     f))]))
 
+(define-syntax make-relation
+  (syntax-rules ()
+    [(make-relation (name inputs ...))
+     (make-function (name inputs ...) unit)]))
+
 (define-syntax make-rewrite
   (syntax-rules (:when)
     [(make-rewrite lhs rhs :when (cond ...))
-     (make-rule (lhs cond ...) ((set lhs rhs)))]
+     (make-rule (lhs cond ...) ((set! lhs rhs)))]
     [(make-rewrite lhs rhs)
      (make-rewrite lhs rhs :when ())]))
 
@@ -101,3 +106,35 @@
   (syntax-rules ()
     [(make-run-action! action)
      (run-action! (make-action action))]))
+
+(define-syntax declare-const
+  (syntax-rules ()
+    [(declare-const name type)
+     (define name
+       (let ()
+         (make-function (name) type)
+         (make-run-action! (name))
+         name))]))
+
+(define-syntax define-const
+  (syntax-rules ()
+    [(define-const name type value)
+     (define name
+       (let ()
+         (declare-const name type)
+         (make-run-action! (union! (name) value))
+         name))
+     ]))
+
+(define-syntax make-check
+  (syntax-rules ()
+    [(make-check atom ...)
+     (let* ([query (make-query (atom ...))]
+            [result (run-query query)])
+       (when (null? result)
+         (raise (format "check failure: ~a" query))))]))
+
+(define-syntax make-run-query
+  (syntax-rules ()
+    [(run-query atom ...)
+     (run-query (make-query (atom ...)))]))

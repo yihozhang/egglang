@@ -63,12 +63,14 @@
 (define (new-value! type)
   (cond [(sort? type)        (uf-make-set)]
         [(semilattice? type) (semilattice-bot type)]
+        [(equal? unit type) '()]
         [else (raise (format "no default value for ~a" type))]))
 
 (define (merge-fn! type vals)
   (cond [(sort? type)        (foldl uf-union! (car vals) (cdr vals))
                              (uf-find (car vals))]
         [(semilattice? type) (foldl (semilattice-join type) (car vals) (cdr vals))]
+        [(equal? unit type) '()]
         [else (raise (format "merge function is not supported for ~a" type))]))
 
 (define (canonicalize type val)

@@ -222,6 +222,12 @@
 (define (rcompose . args)
   (apply compose (reverse args)))
 
+(define (compile-query query egraph)
+  (define fake-rule (rule query (actions '())))
+  (define compiled-rule (compile fake-rule egraph))
+  (core-rule-query compiled-rule)
+  )
+
 (define (compile rule egraph)
   (define passes
     (rcompose flatten-rule
