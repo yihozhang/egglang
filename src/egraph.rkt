@@ -1,7 +1,7 @@
 #lang racket/base
 
 (provide current-egraph current-ruleset
-         register-function register-sort register-rule
+         register-function register-sort register-term register-rule
          egraph-functions egraph-sorts egraph-rulesets
          make-egraph show-egraph
          print-size print-table
@@ -25,11 +25,13 @@
 (struct egraph
   (functions
    sorts
+   terms
    rulesets))
 
 (define (make-egraph)
   (egraph
    (make-hash)
+   (make-gvector)
    (make-gvector)
    (make-hash (list (cons 'main (make-gvector))))))
 
@@ -63,6 +65,8 @@
   (define table (lookup-function egraph function))
   (define access-pattern (append args '(#f)))
   (define tuples (table-get table access-pattern))
+  (displayln function)
+  (displayln args)
   (if (null? tuples)
       (let* ([otype (function-output-type function)]
              [new-val (new-value! otype)]
@@ -100,6 +104,10 @@
 (define (register-sort egraph sort)
   (define sorts (egraph-sorts egraph))
   (gvector-add! sorts sort))
+
+(define (register-term egraph term)
+  (define terms (egraph-terms egraph))
+  (gvector-add! terms term))
 
 ;; Registers a rule
 (define (register-rule egraph rule #:ruleset ruleset)

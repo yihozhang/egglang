@@ -1,12 +1,14 @@
 #lang racket/base
 
 (require racket/match
+         racket/function
          "union-find.rkt")
 
 (provide i64 u64 String Rational unit
          semilattice
-         sort
-         show-base-type base-type-name base-type? literal?
+         sort term
+         show-base-type base-type-name
+         literal? literal-type?
          ;; function related
          function
          function? show-function function-name
@@ -33,15 +35,7 @@
 (define unit '())
 (struct semilattice (name dom bot join))
 (struct sort (name) #:transparent)
-
-(define (literal? l)
-  (or (number? l)
-      ))
-
-(define (base-type? type)
-  (match type
-    [(or 'i64) #t]
-    [_ #f]))
+(struct term (name) #:transparent)
 
 (define (show-base-type type)
   (match type
@@ -50,18 +44,33 @@
     ['u64 'u64]
     ['Rational 'Rational]
     ['String 'String]
-    [(sort name) `(sort ,name)]))
+    [(sort name) `(sort ,name)]
+    [(term name) `(term ,name)]))
 
 (define (base-type-name type)
   (match type
     [(semilattice name dom bot join) name]
     ['i64 'i64]
     ['u64 'u64]
-    [(sort name) name]))
+    ['Rational 'Rational]
+    ['String 'String]
+    [(sort name) name]
+    [(term name) name]))
+
+(define (literal? l)
+  (or (number? l)
+      (rational? l)
+      (string? l)))
+
+(define (literal-type? type)
+  (match type
+    [(or 'i64 'u64 'Rational 'String) #t]
+    [_ #f]))
 
 
 (define (new-value! type)
   (cond [(sort? type)        (uf-make-set)]
+        [(term? type)        (uf-make-set)]
         [(semilattice? type) (semilattice-bot type)]
         [(equal? unit type) '()]
         [else (raise (format "no default value for ~a" type))]))
@@ -69,9 +78,13 @@
 (define (merge-fn! type vals)
   (cond [(sort? type)        (foldl uf-union! (car vals) (cdr vals))
                              (uf-find (car vals))]
+        ;;  terms implement the choice operator of Datalog
+        [(term? type) (car vals)]
         [(semilattice? type) (foldl (semilattice-join type) (car vals) (cdr vals))]
         [(equal? unit type) '()]
-        [else (raise (format "merge function is not supported for ~a" type))]))
+        [else (if (andmap (curry equal? (car vals)) (cdr vals))
+                  (car vals)
+                  (raise (format "merge function is not supported for ~a" type)))]))
 
 (define (canonicalize type val)
   (cond [(sort? type) (uf-find val)]

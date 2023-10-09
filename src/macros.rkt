@@ -73,6 +73,13 @@
                               [_ (register-sort (current-egraph) s)])
                          s))]))
 
+(define-syntax make-term
+  (syntax-rules ()
+    [(make-term term-name)
+     (define term-name (let* ([s (term (quote term-name))]
+                              [_ (register-term (current-egraph) s)])
+                         s))]))
+
 (define-syntax make-function
   (syntax-rules ()
     [(make-function (name inputs ...) output)
