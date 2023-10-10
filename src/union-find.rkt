@@ -1,31 +1,38 @@
 #lang racket/base
 
-(require data/gvector)
 (provide uf-make-set uf-find uf-union!)
 
-(define parent (make-gvector))
+(struct eclass (id rank parent) #:transparent)
 
-(struct eclass (id) #:prefab)
+(define (uf-make-set x)
+  (box (eclass x 0 #f)))
 
-(define (uf-make-set)
-  (define len (gvector-count parent))
-  (gvector-add! parent len)
-  (eclass len))
-
-(define (uf-find c)
-  (define (go x)
-    (define p (gvector-ref parent x))
-    (if (equal? p x)
-        x
-        (let ([leader (go p)])
-          (gvector-set! parent x leader)
-          leader)))
-
-  (define x (eclass-id c))
-  (eclass (go x)))
+(define (uf-find x)
+  (define p (eclass-parent (unbox x)))
+  (if (not p)
+      x
+      (let ([leader (uf-find p)])
+        (set-box! x (struct-copy eclass (unbox x)
+                                 [parent leader]))
+        leader)))
 
 (define (uf-union! a b)
   (define pa (uf-find a))
   (define pb (uf-find b))
-  (gvector-set! parent (eclass-id pb) (eclass-id pa))
-  pa)
+  (define pa-rank (eclass-rank (unbox pa)))
+  (define pb-rank (eclass-rank (unbox pb)))
+  (define (update pa pb)
+    (set-box! pa (struct-copy eclass (unbox pa)
+                              [parent pb])))
+  (cond [(equal? pa pb) pa]
+        [(< pa-rank pb-rank)
+         (update pa pb)
+         pb]
+        [(> pa-rank pb-rank)
+         (update pb pa)
+         pa]
+        [else
+         (update pb pa)
+         (set-box! pa (struct-copy eclass (unbox pa)
+                                   [rank (eclass-rank (unbox pa))]))
+         pa]))

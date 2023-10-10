@@ -69,8 +69,8 @@
 
 
 (define (new-value! type)
-  (cond [(sort? type)        (uf-make-set)]
-        [(term? type)        (uf-make-set)]
+  (cond [(sort? type)        (uf-make-set (gensym (sort-name type)))]
+        [(term? type)        (uf-make-set (gensym (term-name type)))]
         [(semilattice? type) (semilattice-bot type)]
         [(equal? unit type) '()]
         [else (raise (format "no default value for ~a" type))]))
