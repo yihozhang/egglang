@@ -7,6 +7,7 @@
 (provide i64 u64 String Rational unit
          semilattice
          sort term
+         sort? term?
          show-base-type base-type-name
          literal? literal-type?
          ;; function related
@@ -23,7 +24,8 @@
          ;; make-set and merge
          new-value! merge-fn!
          canonicalize
-         False)
+         False
+         make-uf-mapper)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; base types
@@ -67,17 +69,24 @@
     [(or 'i64 'u64 'Rational 'String) #t]
     [_ #f]))
 
+(define (make-uf-mapper) (make-hash))
 
-(define (new-value! type)
-  (cond [(sort? type)        (uf-make-set (gensym (sort-name type)))]
-        [(term? type)        (uf-make-set (gensym (term-name type)))]
+(define (new-value! uf-mapper type)
+  (cond [(or (sort? type)
+             (term? type))    (let* ([sym (gensym (sort-name type))]
+                                     [uf-val (uf-make-set sym)])
+                                (hash-set! uf-mapper sym uf-val)
+                                sym)]
         [(semilattice? type) (semilattice-bot type)]
         [(equal? unit type) '()]
         [else (raise (format "no default value for ~a" type))]))
 
-(define (merge-fn! type vals)
-  (cond [(sort? type)        (foldl uf-union! (car vals) (cdr vals))
-                             (uf-find (car vals))]
+(define (merge-fn! uf-mapper type vals)
+  (cond [(sort? type)        (define canon-uf-val
+                               (foldl (lambda (l acc) (uf-union! (hash-ref uf-mapper l) acc 'todo))
+                                      (hash-ref uf-mapper (car vals))
+                                      (cdr vals)))
+                             (eclass-id canon-uf-val)]
         ;;  terms implement the choice operator of Datalog
         [(term? type) (car vals)]
         [(semilattice? type) (foldl (semilattice-join type) (car vals) (cdr vals))]
@@ -86,8 +95,8 @@
                   (car vals)
                   (raise (format "merge function is not supported for ~a" type)))]))
 
-(define (canonicalize type val)
-  (cond [(sort? type) (uf-find val)]
+(define (canonicalize uf-mapper type val)
+  (cond [(sort? type) (eclass-id (uf-find (hash-ref uf-mapper val)))]
         [else val]))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -97,6 +106,7 @@
   (name
    ;; a pair of input types and output type
    types
+   constructor?
    )
   #:transparent)
 
@@ -109,7 +119,7 @@
   (cond ([function? head] (function-name head))
         ([computed-function? head] (computed-function-name head))))
 
-(define False (function 'False (cons '() unit)))
+(define False (function 'False (cons '() unit) #f))
 
 (define (show-computed-function func)
   (define name (computed-function-name func))
@@ -119,7 +129,8 @@
   (define name (function-name func))
   (define in (function-input-types func))
   (define out (function-output-type func))
-  `(function (,name ,@(map base-type-name in)) ,(base-type-name out)))
+  (define head (if (function-constructor? func) 'constructor 'function))
+  `(,head (,name ,@(map base-type-name in)) ,(base-type-name out)))
 
 (define function-input-types (compose car function-types))
 (define function-output-type (compose cdr function-types))

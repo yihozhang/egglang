@@ -9,6 +9,7 @@
                      [make-sort sort]
                      [make-term term]
                      [make-function function]
+                     [make-constructor constructor]
                      [make-relation relation]
                      [make-ruleset ruleset]
                      [make-rewrite rewrite]

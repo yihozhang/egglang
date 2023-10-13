@@ -1,7 +1,8 @@
 #lang racket/base
 
 (provide current-egraph current-ruleset
-         register-function register-sort register-term register-rule
+         register-function register-constructor
+         register-sort register-term register-rule
          egraph-functions egraph-sorts egraph-rulesets
          make-egraph show-egraph
          print-size print-table
@@ -26,14 +27,16 @@
   (functions
    sorts
    terms
-   rulesets))
+   rulesets
+   uf-mapper))
 
 (define (make-egraph)
   (egraph
    (make-hash)
+   (make-hash)
    (make-gvector)
-   (make-gvector)
-   (make-hash (list (cons 'main (make-gvector))))))
+   (make-hash (list (cons 'main (make-gvector))))
+   (make-uf-mapper)))
 
 (define (show-egraph egraph)
   (define function-asts
@@ -42,9 +45,14 @@
        (cons (show-function fun)
              (show-table table)))))
   (define sort-asts
-    (for/list ([sort (in-gvector (egraph-sorts egraph))])
+    (for/list ([sort (in-hash-keys (egraph-sorts egraph))])
       (show-base-type sort)))
   (append sort-asts function-asts))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; globals
+(define current-egraph (make-parameter (make-egraph)))
+(define current-ruleset (make-parameter 'main))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Functions
@@ -55,6 +63,15 @@
   (define name (function-name function))
   (hash-set! functions function (make-table name arity)))
 
+(define (register-constructor egraph function)
+  (define otype (function-output-type function))
+  (unless (sort? otype)
+    (displayln (format "~a is not a constructor" function)))
+  (define sorts (egraph-sorts egraph))
+  (gvector-add! (hash-ref sorts otype) function)
+
+  (register-function egraph function))
+
 ;; Returns a table corresponding to the table
 (define (lookup-function egraph function)
   (define functions (egraph-functions egraph))
@@ -62,14 +79,13 @@
 
 ;; Evaluates a funcion on the given input
 (define (eval!-function egraph function args)
+  (define uf-mapper (egraph-uf-mapper egraph))
   (define table (lookup-function egraph function))
   (define access-pattern (append args '(#f)))
   (define tuples (table-get table access-pattern))
-  (displayln function)
-  (displayln args)
   (if (null? tuples)
       (let* ([otype (function-output-type function)]
-             [new-val (new-value! otype)]
+             [new-val (new-value! uf-mapper otype)]
              [new-tuple (append args (list new-val))])
         (table-append! table new-tuple)
         new-val)
@@ -77,6 +93,7 @@
 
 ;; Runs the `set` action on the given function
 (define (set!-function egraph function args new-val)
+  (define uf-mapper (egraph-uf-mapper egraph))
   (define table (lookup-function egraph function))
   (define access-pattern (append args '(#f)))
   (define old-vals (table-get table access-pattern #:full-tuple? #f))
@@ -88,7 +105,7 @@
     (if (not (null? old-vals))
         (let ([old-val (only (only old-vals))]
               [otype (function-output-type function)])
-          (merge-fn! otype (list old-val new-val)))
+          (merge-fn! uf-mapper otype (list old-val new-val)))
         new-val))
 
   ;; remove the old tuple if exists
@@ -103,7 +120,9 @@
 ;; Registers a sort
 (define (register-sort egraph sort)
   (define sorts (egraph-sorts egraph))
-  (gvector-add! sorts sort))
+  (when (hash-has-key? sorts sort)
+    (error (format "sort ~a already registered" sort)))
+  (hash-set! sorts sort (make-gvector)))
 
 (define (register-term egraph term)
   (define terms (egraph-terms egraph))
@@ -114,10 +133,6 @@
   (define rulesets (egraph-rulesets egraph))
   (define rules (hash-ref! rulesets ruleset (thunk (make-gvector))))
   (gvector-add! rules rule))
-
-(define current-egraph (make-parameter (make-egraph)))
-
-(define current-ruleset (make-parameter 'main))
 
 ;; Runs an action
 (define (run-action! action [egraph (current-egraph)])
@@ -267,11 +282,16 @@
           (set!-function egraph fun args+ expr+)
           (go rest m)]
          [(core-union-action v1 v2)
-          (uf-union! (eval-arg m v1) (eval-arg m v2))
+          ;; TODO: refactor this
+          (define uf-mapper (egraph-uf-mapper egraph))
+          (define v1+ (hash-ref uf-mapper (eval-arg m v1)))
+          (define v2+ (hash-ref uf-mapper (eval-arg m v2)))
+          (uf-union! v1+ v2+ 'todo)
           (go rest m)])]
       ['() (void)])))
 
 (define (rebuild egraph)
+  (define uf-mapper (egraph-uf-mapper egraph))
   (define functions (egraph-functions egraph))
   (define (rebuild-once)
     (for/sum ([fun (in-hash-keys functions)])
@@ -322,7 +342,7 @@
                       (define tab-list (table->list table))
                       (define canon-tab-list
                         (for/list ([tuple tab-list])
-                          (define new-tuple (map canonicalize full-type tuple))
+                          (define new-tuple (map (curry canonicalize uf-mapper) full-type tuple))
                           (unless (equal? new-tuple tuple)
                             (set! update-count (add1 update-count)))
                           new-tuple))
@@ -339,7 +359,7 @@
                               (table-append! new-table (first group))
                               (let ()
                                 (define out-vals (map last group))
-                                (define new-out-val (merge-fn! otype out-vals))
+                                (define new-out-val (merge-fn! uf-mapper otype out-vals))
                                 (define tuple (list-set (first group) (sub1 arity) new-out-val))
                                 (table-append! new-table tuple)))
 
