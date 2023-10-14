@@ -73,7 +73,7 @@
 
 (define (new-value! uf-mapper type)
   (cond [(or (sort? type)
-             (term? type))    (let* ([sym (gensym (sort-name type))]
+             (term? type))    (let* ([sym (gensym (base-type-name type))]
                                      [uf-val (uf-make-set sym)])
                                 (hash-set! uf-mapper sym uf-val)
                                 sym)]

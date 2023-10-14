@@ -52,12 +52,15 @@
      (actions (list (make-action action) ...))]))
 
 (define-syntax make-rule
-  (syntax-rules ()
-    [(make-rule query actions)
-     (let* ([r (rule (make-query query)
+  (syntax-rules (:name)
+    [(make-rule query actions :name name)
+     (let* ([r (rule (quote name)
+                     (make-query query)
                      (make-actions actions))]
             [_ (register-rule (current-egraph) r #:ruleset (current-ruleset))])
-       (void))]))
+       (void))]
+    [(make-rule query actions)
+     (make-rule query actions :name (rule query actions))]))
 
 (define-syntax make-ruleset
   (syntax-rules ()
@@ -100,11 +103,16 @@
      (make-function (name inputs ...) unit)]))
 
 (define-syntax make-rewrite
-  (syntax-rules (:when)
+  (syntax-rules (:when :name)
+    [(make-rewrite lhs rhs :when (cond ...) :name name)
+     (make-rule (lhs cond ...) ((set! lhs rhs)) :name name)]
     [(make-rewrite lhs rhs :when (cond ...))
-     (make-rule (lhs cond ...) ((set! lhs rhs)))]
+     (make-rewrite lhs rhs :when (cond ...)
+                   :name (rewrite lhs rhs :when (cond ...)))]
+    [(make-rewrite lhs rhs :name name)
+     (make-rewrite lhs rhs :when () :name name)]
     [(make-rewrite lhs rhs)
-     (make-rewrite lhs rhs :when ())]))
+     (make-rewrite lhs rhs :when () :name (rewrite lhs rhs))]))
 
 (define-syntax make-datatype
   (syntax-rules ()

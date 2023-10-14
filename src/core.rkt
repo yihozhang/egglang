@@ -24,7 +24,7 @@
 
 (struct core-query (atoms) #:transparent)
 (struct core-actions (actions) #:transparent)
-(struct core-rule (query actions) #:transparent)
+(struct core-rule (name query actions) #:transparent)
 
 ;; constant
 (define false-atom (core-atom False '()))
@@ -105,7 +105,8 @@
   (core-actions (append* (map flatten-action actions))))
 
 (define (flatten-rule rule)
-  (core-rule (flatten-query (rule-query rule))
+  (core-rule (rule-name rule)
+             (flatten-query (rule-query rule))
              (flatten-actions (rule-actions rule))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -144,7 +145,8 @@
 ;; Conflict-avoiding Renaming
 (define (rename-rule rule)
   (match-define
-    (core-rule (core-query atoms)
+    (core-rule name
+               (core-query atoms)
                (core-actions actions))
     rule)
   (define vars (list->set (flatten (map collect-vars-core-atom atoms))))
@@ -175,7 +177,8 @@
                    (core-union-action _ _))
                (loop actions vars (cons action result))])))))
 
-  (core-rule (core-query atoms)
+  (core-rule name
+             (core-query atoms)
              (core-actions actions+)))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -185,7 +188,8 @@
 (define (canonicalize-value-eq rule)
   (let loop ([rule rule])
     (match-define
-      (core-rule (core-query atoms)
+      (core-rule name
+                 (core-query atoms)
                  (core-actions actions))
       rule)
 
@@ -196,12 +200,12 @@
             (let* ([atoms+ (remove* (list (core-value-eq e e))
                                     (map (curry subst-core-atom v e) atoms))]
                    [actions+ (map (curry subst-core-action v e) actions)])
-              (core-rule (core-query atoms+) (core-actions actions+))))
+              (core-rule name (core-query atoms+) (core-actions actions+))))
 
           (define rule+
             (cond [(equal? lhs rhs) ; (= x x): remove the atom
                    (let ([atoms+ (remove core-value-eq-atom atoms)])
-                     (core-rule (core-query atoms+) (core-actions actions)))]
+                     (core-rule name (core-query atoms+) (core-actions actions)))]
                   [(symbol? lhs) (go lhs rhs)] ; (= x y) where x is a symbol: subst x y
                   [(symbol? rhs) (go rhs lhs)] ; (= x y) where y is a symbol: subst y x
                   [(and (literal? lhs) ; (= l1 l2) where (!= l1 l2): replace with false
@@ -227,7 +231,7 @@
   (apply compose (reverse args)))
 
 (define (compile-query query egraph)
-  (define fake-rule (rule query (actions '())))
+  (define fake-rule (rule 'dummy query (actions '())))
   (define compiled-rule (compile fake-rule egraph))
   (core-rule-query compiled-rule)
   )
