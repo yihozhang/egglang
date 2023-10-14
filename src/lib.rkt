@@ -7,7 +7,9 @@
 (require "egraph.rkt")
 (provide (rename-out [make-rule rule]
                      [make-sort sort]
+                     [make-term term]
                      [make-function function]
+                     [make-constructor constructor]
                      [make-relation relation]
                      [make-ruleset ruleset]
                      [make-rewrite rewrite]
@@ -19,4 +21,4 @@
          show-function show-rule
          (except-out (all-from-out "egraph.rkt") run-action! run-query)
          (all-from-out "core.rkt")
-         (except-out (all-from-out "type.rkt") sort function))
+         (except-out (all-from-out "type.rkt") sort term function))

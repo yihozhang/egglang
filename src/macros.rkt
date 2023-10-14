@@ -73,11 +73,25 @@
                               [_ (register-sort (current-egraph) s)])
                          s))]))
 
+(define-syntax make-term
+  (syntax-rules ()
+    [(make-term term-name)
+     (define term-name (let* ([s (term (quote term-name))]
+                              [_ (register-term (current-egraph) s)])
+                         s))]))
+
 (define-syntax make-function
   (syntax-rules ()
     [(make-function (name inputs ...) output)
-     (define name (let* ([f (function (quote name) (cons (list inputs ...) output))]
+     (define name (let* ([f (function (quote name) (cons (list inputs ...) output) #f)]
                          [_ (register-function (current-egraph) f)])
+                    f))]))
+
+(define-syntax make-constructor
+  (syntax-rules ()
+    [(make-function (name inputs ...) output)
+     (define name (let* ([f (function (quote name) (cons (list inputs ...) output) #t)]
+                         [_ (register-constructor (current-egraph) f)])
                     f))]))
 
 (define-syntax make-relation
@@ -98,7 +112,7 @@
      (define-values (D func ...)
        (let ()
          (make-sort D)
-         (make-function (func args ...) D)
+         (make-constructor (func args ...) D)
          ...
          (values D func ...)))]))
 
