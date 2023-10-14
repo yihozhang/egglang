@@ -8,7 +8,7 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Surface IR declaration
 
-(struct rule (query actions) #:transparent)
+(struct rule (name query actions) #:transparent)
 (struct query (atoms) #:transparent)
 (struct actions (actions) #:transparent)
 

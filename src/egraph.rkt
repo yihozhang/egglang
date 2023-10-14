@@ -24,10 +24,18 @@
 ;; egraph
 
 (struct egraph
-  (functions
+  (;; Hash map from functioin names to functions
+   functions
+   ;; Hash map from sort names to sorts
    sorts
+   ;; Gvector of terms
    terms
+   ;; Hash map from ruleset names to gvectors of
+   ;; rule names
    rulesets
+   ;; Hash map from rule names to rules
+   rules
+   ;; Hash map from symbols to E-class ids
    uf-mapper))
 
 (define (make-egraph)
@@ -36,6 +44,7 @@
    (make-hash)
    (make-gvector)
    (make-hash (list (cons 'main (make-gvector))))
+   (make-hash)
    (make-uf-mapper)))
 
 (define (show-egraph egraph)
@@ -130,9 +139,17 @@
 
 ;; Registers a rule
 (define (register-rule egraph rule #:ruleset ruleset)
+  ;; Add rule to rules
+  (define rules (egraph-rules egraph))
+  (define name (rule-name rule))
+  (when (hash-has-key? rules name)
+    (error (format "~a is already registered" name)))
+  (hash-set! rules name rule)
+
+  ;; Register rules in the ruleset
   (define rulesets (egraph-rulesets egraph))
-  (define rules (hash-ref! rulesets ruleset (thunk (make-gvector))))
-  (gvector-add! rules rule))
+  (define rule-names (hash-ref! rulesets ruleset (thunk (make-gvector))))
+  (gvector-add! rule-names name))
 
 ;; Runs an action
 (define (run-action! action [egraph (current-egraph)])
@@ -150,8 +167,13 @@
 
 ;; Runs a ruleset for one iteration
 (define (run1 [ruleset (current-ruleset)] [egraph (current-egraph)])
-  (define rules (hash-ref (egraph-rulesets egraph) ruleset))
-  (define compiled-rules (for/list ([rule (in-gvector rules)]) (compile rule egraph)))
+  (define rule-names (hash-ref (egraph-rulesets egraph) ruleset))
+  ;; For each rule name, accumulate the rule and its compiled version
+  (define-values (rules compiled-rules)
+    (for/lists (rules compiled-rules)
+               ([name (in-gvector rule-names)])
+      (define rule (hash-ref (egraph-rules egraph) name))
+      (values rule (compile rule egraph))))
   ;; search
   (define search-start-time (current-milliseconds))
   (define matches
@@ -164,11 +186,10 @@
   ;; apply
   (define apply-start-time (current-milliseconds))
   (for ([rule (in-list compiled-rules)]
-        [original-rule [in-gvector rules]]
         [ms (in-list matches)])
     (define actions (core-rule-actions rule))
     (unless (zero? (length ms))
-      (displayln (format "Running ~a for ~a times" (show-rule original-rule) (length ms))))
+      (displayln (format "Running ~a for ~a times" (core-rule-name rule) (length ms))))
     (for ([m ms])
       (run-core-actions! egraph actions m)))
 
