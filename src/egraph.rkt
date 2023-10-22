@@ -13,7 +13,7 @@
          egraph-rulesets
          make-egraph show-egraph
          print-size print-table
-         run1 run run-action! run-query
+         run1 run run-action! run-query saturate
          table-length ;; TODO: export table-related APIs
          )
 (require data/gvector
@@ -98,6 +98,7 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Functions
 ;; Registers a function
+
 (define (register-function egraph function)
   (define functions (egraph-functions egraph))
   (define arity (function-arity function))
@@ -120,6 +121,9 @@
   (hash-ref functions function))
 
 ;; Evaluates a funcion on the given input
+;; Returns two values: the evaluated result
+;; and whether a new tuple is created
+;; in the database
 (define (eval!-function egraph function args)
   (define uf-mapper (egraph-uf-mapper egraph))
   (define table (lookup-function egraph function))
@@ -130,34 +134,37 @@
              [new-val (new-value! uf-mapper otype)]
              [new-tuple (append args (list new-val))])
         (table-append! table new-tuple)
-        new-val)
-      (only (only tuples))))
+        (values new-val #t))
+      (values (only (only tuples)) #f)))
 
 ;; Runs the `set` action on the given function
+;; Returns true if the database if updated
 (define (set!-function egraph function args new-val)
   (define uf-mapper (egraph-uf-mapper egraph))
   (define table (lookup-function egraph function))
   (define access-pattern (append args '(#f)))
   (define old-vals (table-get table access-pattern #:full-tuple? #f))
+
   (unless (<= (length old-vals) 1)
     (raise "Functional dependency is violated"))
 
-  ;; figure out merge value
-  (define val
-    (if (not (null? old-vals))
-        (let ([old-val (only (only old-vals))]
-              [otype (function-output-type function)])
-          (merge-fn! uf-mapper otype (list old-val new-val)))
-        new-val))
+  (if (null? old-vals)
+      ;; Tuple does not exist, insert into the database
+      (let ([new-tuple (append args (list new-val))])
+        (table-append! table new-tuple)
+        #t)
 
-  ;; remove the old tuple if exists
-  (when (not (null? old-vals))
-    (define old-tuple (append args (list (only (only old-vals)))))
-    (table-remove! table old-tuple))
-
-  ;; insert the new tuple
-  (define new-tuple (append args (list val)))
-  (table-append! table new-tuple))
+      (let* ([old-val (only (only old-vals))]
+             [otype (function-output-type function)]
+             [val (merge-fn! uf-mapper otype (list old-val new-val))])
+        (if (not (equal? old-val val))
+            (let ([old-tuple (append args (list old-val))]
+                  [new-tuple (append args (list val))])
+              (table-remove! table old-tuple)
+              (table-append! table new-tuple)
+              #t)
+            #f))
+      ))
 
 ;; Registers a sort
 (define (register-sort egraph sort)
@@ -204,7 +211,9 @@
 (define (run-action! action [cause 'user-action] [egraph (current-egraph)])
   (define as (actions (list action)))
   (define core-actions (flatten-actions as))
-  (run-core-actions! egraph core-actions cause))
+  (define-values (m updates)
+    (run-core-actions! egraph core-actions cause))
+  m)
 
 (define (run-query query [egraph (current-egraph)])
   ;; TODO: For now, let's just rebuild the egraph manually
@@ -213,6 +222,15 @@
   (rebuild egraph)
   (define core-query (compile-query query egraph))
   (run-core-query egraph core-query))
+
+;; Runs a ruleset until saturation
+(define (saturate [ruleset (current-ruleset)] [egraph (current-egraph)])
+  (let go ([acc-report (make-run-report)])
+    (define new-report (run1 ruleset egraph))
+    (define report (combine-report acc-report new-report))
+    (if (zero? (run-report-tuple-update-count new-report))
+        report
+        (go report))))
 
 ;; Runs a ruleset for one iteration
 (define (run1 [ruleset (current-ruleset)] [egraph (current-egraph)])
@@ -223,6 +241,7 @@
                ([name (in-gvector rule-names)])
       (define rule (hash-ref (egraph-rules egraph) name))
       (values rule (compile rule egraph))))
+
   ;; search
   (define search-start-time (current-milliseconds))
   (define matches
@@ -234,35 +253,37 @@
 
   ;; apply
   (define apply-start-time (current-milliseconds))
-  (for ([rule (in-list compiled-rules)]
-        [ms (in-list matches)])
-    (define actions (core-rule-actions rule))
-    (unless (zero? (length ms))
-      (displayln (format "Running ~a for ~a times" (core-rule-name rule) (length ms))))
-    (for ([m ms])
-      ;; TODO: rule should contain original AST
-      (run-core-actions! egraph actions rule m)))
+  (define apply-update-count
+    (for/sum ([rule (in-list compiled-rules)]
+              [ms (in-list matches)])
+      (define actions (core-rule-actions rule))
+      (unless (zero? (length ms))
+        (displayln (format "Running ~a for ~a times" (core-rule-name rule) (length ms))))
+      (for/sum ([m ms])
+        ;; TODO: rule should contain original AST
+        (define-values (m+ update-count) (run-core-actions! egraph actions rule m))
+        update-count)))
 
   ;; rebuild
   (define rebuild-start-time (current-milliseconds))
-  (rebuild egraph)
+  (define rebuild-update-count (rebuild egraph))
   (define rebuild-end-time (current-milliseconds))
 
-  (list (cons 'search (- apply-start-time search-start-time))
-        (cons 'apply (- rebuild-start-time apply-start-time))
-        (cons 'rebuild (- rebuild-end-time rebuild-start-time)))
-  )
+  (run-report
+   ;; search time
+   (- apply-start-time search-start-time)
+   ;; apply time
+   (- rebuild-start-time apply-start-time)
+   ;; rebuild time
+   (- rebuild-end-time rebuild-start-time)
+   ;; update count
+   (+ apply-update-count rebuild-update-count)
+   ;; iteration number
+   1))
 
 (define (run n [ruleset (current-ruleset)] [egraph (current-egraph)])
-  (define (combine-report r1 r2)
-    (list (cons 'search (+ (cdr (assoc 'search r1)) (cdr (assoc 'search r2))))
-          (cons 'apply (+ (cdr (assoc 'apply r1)) (cdr (assoc 'apply r2))))
-          (cons 'rebuild (+ (cdr (assoc 'rebuild r1)) (cdr (assoc 'rebuild r2))))
-          ))
 
-  (define initial '((search . 0)
-                    (apply . 0)
-                    (rebuild . 0)))
+  (define initial (make-run-report))
 
   (define (do n result)
     (if (zero? n) result
@@ -327,6 +348,7 @@
   (go egraph (core-query-atoms query) '()))
 
 ;; Returns the result context after running actions
+;; as well as the number of updated tuples
 (define (run-core-actions! egraph actions [cause #f] [m '()])
   ;; context will be updated at the end
   (define jus (justification cause #f))
@@ -334,40 +356,49 @@
     (if (symbol? arg)
         (cdr (assoc arg m))
         arg))
-  (define context
+  (define-values (context updates)
     (let go ([actions (core-actions-actions actions)]
-             [m (termify egraph m)])
+             ;; TODO termify converts e-classes in the context to corresponding
+             ;; terms. Not yet sure how this will work out
+             [m (termify egraph m)]
+             ;; Number of updates to the database
+             [updates 0])
       (match actions
         [(cons action rest)
          (match action
            [(core-let-atom-action var fun args)
             (define args+ (map (curry eval-arg m) args))
-            (define val (cond [(function? fun) (eval!-function egraph fun args+)]
-                              ;; [(function? fun) (eval!-function egraph fun args+ jus)]
-                              [(computed-function? fun)
-                               (apply (computed-function-run fun) args+)]))
+            (define-values (val updated?)
+              (cond [(function? fun) (eval!-function egraph fun args+)]
+                    ;; [(function? fun) (eval!-function egraph fun args+ jus)]
+                    [(computed-function? fun) (values (apply (computed-function-run fun) args+) #f)]))
             (define m+ (cons (cons var val) m))
-            (go rest m+)]
+            (define updates+ (+ updates (if updated? 1 0)))
+            (go rest m+ updates)]
            [(core-let-val-action var val)
             (define val+ (eval-arg m val))
             (define m+ (cons (cons var val+) m))
-            (go rest m+)]
+            (go rest m+ updates)]
            [(core-set-action fun args expr)
             (define args+ (map (curry eval-arg m) args))
             (define expr+ (eval-arg m expr))
             ;; (set!-function egraph fun args+ expr+ jus)
-            (set!-function egraph fun args+ expr+)
-            (go rest m)]
+            (define updated? (set!-function egraph fun args+ expr+))
+            (define updates+ (+ updates (if updated? 1 0)))
+            (go rest m updates+)]
            [(core-union-action v1 v2)
             ;; TODO: refactor this
             (define uf-mapper (egraph-uf-mapper egraph))
             (define v1+ (hash-ref uf-mapper (eval-arg m v1)))
             (define v2+ (hash-ref uf-mapper (eval-arg m v2)))
             (uf-union! v1+ v2+ jus)
-            (go rest m)])]
-        ['() m])))
+            ;; We don't update counts for union, as
+            ;; this will be taken care of during rebuilding
+            (go rest m updates)])]
+        ['() (values m updates)])))
 
-  (set-justification-context! jus m))
+  (set-justification-context! jus m)
+  (values context updates))
 
 (define (rebuild egraph)
   (define uf-mapper (egraph-uf-mapper egraph))
@@ -469,3 +500,23 @@
 
 ;; Utility function
 (define (only lst) (match lst [(list e) e]))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Run report
+
+(struct run-report
+  (search-time
+   apply-time
+   rebuild-time
+   tuple-update-count
+   iter) #:transparent)
+
+(define (make-run-report)
+  (run-report 0 0 0 0 0))
+
+(define (combine-report r1 r2)
+  (run-report (+ (run-report-search-time r1) (run-report-search-time r2))
+              (+ (run-report-apply-time r1) (run-report-apply-time r2))
+              (+ (run-report-rebuild-time r1) (run-report-rebuild-time r2))
+              (+ (run-report-tuple-update-count r1) (run-report-tuple-update-count r2))
+              (+ (run-report-iter r1) (run-report-iter r2))))
