@@ -1,51 +1,83 @@
 #lang racket/base
 
 (provide current-egraph current-ruleset
+         ;; functions
          register-function register-constructor
-         register-sort register-term register-rule
-         egraph-functions egraph-sorts egraph-rulesets
+         egraph-functions
+         ;; sort and term
+         register-sort register-term register-sort-term-pair get-term-or-id
+         get-=>@ get-@=>
+         egraph-sorts
+         ;; rules
+         register-rule
+         egraph-rulesets
          make-egraph show-egraph
          print-size print-table
          run1 run run-action! run-query
          table-length ;; TODO: export table-related APIs
          )
 (require data/gvector
-         data/bit-vector
-         racket/set
          racket/function
          racket/match
          racket/list
          "core.rkt"
          "ast.rkt"
          "type.rkt"
-         "union-find.rkt")
+         "table.rkt"
+         "union-find.rkt"
+         "proofs.rkt")
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; egraph
 
 (struct egraph
-  (;; Hash map from functioin names to functions
+  (;; Hash map from functioin to tables
    functions
-   ;; Hash map from sort names to sorts
+   ;; Hash map from sorts to lists of constructors
    sorts
-   ;; Gvector of terms
+   ;;  Hash map from terms to lists of constructors
    terms
+   ;; Hash map from term to sort and vice versa
+   term->sort
+   sort->term
+   sort->@=>
+   sort->=>@
    ;; Hash map from ruleset names to gvectors of
    ;; rule names
    rulesets
    ;; Hash map from rule names to rules
    rules
    ;; Hash map from symbols to E-class ids
-   uf-mapper))
+   uf-mapper
+   ;; #t if proof is generated
+   proof?
+   ))
 
-(define (make-egraph)
+(define (make-egraph #:proof? [proof? #f])
   (egraph
+   ;; functions
+   (make-hash (list (cons Impossible (make-table 'Impossible 0))))
+   ;; sorts
    (make-hash)
+   ;; terms
    (make-hash)
-   (make-gvector)
+   ;; term->sort
+   (make-hash)
+   ;; sort->term
+   (make-hash)
+   ;; sort->@=>
+   (make-hash)
+   ;; sort->=>@
+   (make-hash)
+   ;; rulesets
    (make-hash (list (cons 'main (make-gvector))))
+   ;; rules
    (make-hash)
-   (make-uf-mapper)))
+   ;; uf-mapper
+   (make-uf-mapper)
+   ;; proof?
+   proof?
+   ))
 
 (define (show-egraph egraph)
   (define function-asts
@@ -74,10 +106,11 @@
 
 (define (register-constructor egraph function)
   (define otype (function-output-type function))
-  (unless (sort? otype)
-    (displayln (format "~a is not a constructor" function)))
-  (define sorts (egraph-sorts egraph))
-  (gvector-add! (hash-ref sorts otype) function)
+  (cond [(sort? otype) (let ([sorts (egraph-sorts egraph)])
+                         (gvector-add! (hash-ref sorts otype) function))]
+        [(term? otype) (let ([terms (egraph-terms egraph)])
+                         (gvector-add! (hash-ref terms otype) function))]
+        [else (error (format "~a is not a constructor" function))])
 
   (register-function egraph function))
 
@@ -133,12 +166,28 @@
     (error (format "sort ~a already registered" sort)))
   (hash-set! sorts sort (make-gvector)))
 
+;; Registers a term
 (define (register-term egraph term)
   (define terms (egraph-terms egraph))
-  (gvector-add! terms term))
+  (hash-set! terms term (make-gvector)))
+
+(define (register-sort-term-pair sort term =>@ @=> (egraph (current-egraph)))
+  (hash-set! (egraph-sort->term egraph) sort term)
+  (hash-set! (egraph-term->sort egraph) term sort)
+  (hash-set! (egraph-sort->=>@ egraph) sort =>@)
+  (hash-set! (egraph-sort->@=> egraph) sort @=>))
+
+(define (get-=>@ sort (egraph (current-egraph)))
+  (hash-ref (egraph-sort->=>@ egraph) sort))
+
+(define (get-@=> sort (egraph (current-egraph)))
+  (hash-ref (egraph-sort->@=> egraph) sort))
+
+(define (get-term-or-id maybe-sort (egraph (current-egraph)))
+  (hash-ref (egraph-sort->term egraph) maybe-sort maybe-sort))
 
 ;; Registers a rule
-(define (register-rule egraph rule #:ruleset ruleset)
+(define (register-rule rule [egraph (current-egraph)] [ruleset (current-ruleset)])
   ;; Add rule to rules
   (define rules (egraph-rules egraph))
   (define name (rule-name rule))
@@ -152,10 +201,10 @@
   (gvector-add! rule-names name))
 
 ;; Runs an action
-(define (run-action! action [egraph (current-egraph)])
+(define (run-action! action [cause 'user-action] [egraph (current-egraph)])
   (define as (actions (list action)))
   (define core-actions (flatten-actions as))
-  (run-core-actions! egraph core-actions))
+  (run-core-actions! egraph core-actions cause))
 
 (define (run-query query [egraph (current-egraph)])
   ;; TODO: For now, let's just rebuild the egraph manually
@@ -191,7 +240,8 @@
     (unless (zero? (length ms))
       (displayln (format "Running ~a for ~a times" (core-rule-name rule) (length ms))))
     (for ([m ms])
-      (run-core-actions! egraph actions m)))
+      ;; TODO: rule should contain original AST
+      (run-core-actions! egraph actions rule m)))
 
   ;; rebuild
   (define rebuild-start-time (current-milliseconds))
@@ -276,40 +326,48 @@
 
   (go egraph (core-query-atoms query) '()))
 
-(define (run-core-actions! egraph actions [m '()])
+;; Returns the result context after running actions
+(define (run-core-actions! egraph actions [cause #f] [m '()])
+  ;; context will be updated at the end
+  (define jus (justification cause #f))
   (define (eval-arg m arg)
     (if (symbol? arg)
         (cdr (assoc arg m))
         arg))
-  (let go ([actions (core-actions-actions actions)]
-           [m m])
-    (match actions
-      [(cons action rest)
-       (match action
-         [(core-let-atom-action var fun args)
-          (define args+ (map (curry eval-arg m) args))
-          (define val (cond [(function? fun) (eval!-function egraph fun args+)]
-                            [(computed-function? fun)
-                             (apply (computed-function-run fun) args+)]))
-          (define m+ (cons (cons var val) m))
-          (go rest m+)]
-         [(core-let-val-action var val)
-          (define val+ (eval-arg m val))
-          (define m+ (cons (cons var val+) m))
-          (go rest m+)]
-         [(core-set-action fun args expr)
-          (define args+ (map (curry eval-arg m) args))
-          (define expr+ (eval-arg m expr))
-          (set!-function egraph fun args+ expr+)
-          (go rest m)]
-         [(core-union-action v1 v2)
-          ;; TODO: refactor this
-          (define uf-mapper (egraph-uf-mapper egraph))
-          (define v1+ (hash-ref uf-mapper (eval-arg m v1)))
-          (define v2+ (hash-ref uf-mapper (eval-arg m v2)))
-          (uf-union! v1+ v2+ 'todo)
-          (go rest m)])]
-      ['() (void)])))
+  (define context
+    (let go ([actions (core-actions-actions actions)]
+             [m (termify egraph m)])
+      (match actions
+        [(cons action rest)
+         (match action
+           [(core-let-atom-action var fun args)
+            (define args+ (map (curry eval-arg m) args))
+            (define val (cond [(function? fun) (eval!-function egraph fun args+)]
+                              ;; [(function? fun) (eval!-function egraph fun args+ jus)]
+                              [(computed-function? fun)
+                               (apply (computed-function-run fun) args+)]))
+            (define m+ (cons (cons var val) m))
+            (go rest m+)]
+           [(core-let-val-action var val)
+            (define val+ (eval-arg m val))
+            (define m+ (cons (cons var val+) m))
+            (go rest m+)]
+           [(core-set-action fun args expr)
+            (define args+ (map (curry eval-arg m) args))
+            (define expr+ (eval-arg m expr))
+            ;; (set!-function egraph fun args+ expr+ jus)
+            (set!-function egraph fun args+ expr+)
+            (go rest m)]
+           [(core-union-action v1 v2)
+            ;; TODO: refactor this
+            (define uf-mapper (egraph-uf-mapper egraph))
+            (define v1+ (hash-ref uf-mapper (eval-arg m v1)))
+            (define v2+ (hash-ref uf-mapper (eval-arg m v2)))
+            (uf-union! v1+ v2+ jus)
+            (go rest m)])]
+        ['() m])))
+
+  (set-justification-context! jus m))
 
 (define (rebuild egraph)
   (define uf-mapper (egraph-uf-mapper egraph))
@@ -409,180 +467,5 @@
   (define table (hash-ref (egraph-functions egraph) function))
   (table->list table))
 
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; Access patterns and signatures
-
-;; A signature is a bitvector mask
-;; where #t means it's part of the index
-;; A pattern is a signature converted to list
-;; with every #t replaced with an actual value
-
-;; TODO: don't use false for pattern, it is bad
-
-;; Converts a pattern to a signature
-(define (pattern->sig pat)
-  (define len (length pat))
-  (for/bit-vector #:length len
-    ([b pat])
-    (if b #t #f)))
-
-;; Converts a full tuple to a pattern based on the signature
-(define (apply-sig sig tuple)
-  (for/list ([b (in-bit-vector sig)]
-             [v (in-list tuple)])
-    ;; trick: if b is #t, then use b, otherwise #f
-    (and b v)))
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; table
-
+;; Utility function
 (define (only lst) (match lst [(list e) e]))
-
-(struct table
-  (name
-   arity
-   buffer
-   indexes))
-
-(define (show-table table)
-  (define name (table-name table))
-  (for/list ([tuple (table->list table)])
-    (define-values (args out) (split-at-right tuple 1))
-    `(set! (,name ,@args) ,@out)))
-
-(define (make-table name arity)
-  (define full-sig (make-bit-vector arity #t))
-  (table name
-         arity
-         (make-gvector)
-         (make-hash (list (cons full-sig (make-index full-sig))))))
-
-;; Return a list of tuples
-(define (table-get table access-pattern #:full-tuple? [full-tuple? #f])
-  (define (compute-residual sig tuple)
-    (for/list ([b sig]
-               [v tuple]
-               #:when (not b))
-      v))
-
-  (define signature (pattern->sig access-pattern))
-  (define index (get-index! table signature))
-  (define ids (index-ref index access-pattern))
-
-  (define buffer (table-buffer table))
-  (for/list ([id (in-set ids)])
-    (define tuple (gvector-ref buffer id))
-    (if full-tuple?
-        tuple
-        (compute-residual signature tuple))))
-
-(define (table-append! table tuple)
-  ;; add to the buffer
-  (define buffer (table-buffer table))
-  (define id (gvector-count buffer))
-  (gvector-add! buffer tuple)
-
-  ;; add to indices
-  (define indexes (table-indexes table))
-  (for ([(sig index) (in-hash indexes)])
-    (index-add! index tuple id)))
-
-(define (table-remove! table tuple)
-  (define id (get-id-from-tuple table tuple))
-
-  (define indexes (table-indexes table))
-  (for ([(sig index) (in-hash indexes)])
-    (index-remove! index tuple id)))
-
-(define (table-length table)
-  (define index (get-lookup-index table))
-  (hash-count (index-hash index)))
-
-(define (table->list table)
-  (define index (get-lookup-index table))
-  (index-keys index))
-
-(define (drop-nonessential-indexes! table)
-  (define full-sig (table-full-sig table))
-  (define indexes (table-indexes table))
-  (for ([sig (in-list (hash-keys indexes))]
-        #:when (not (equal? sig full-sig)))
-    (hash-remove! indexes sig)
-    ))
-
-;; Below are internal functions to table
-
-(define (table-get-by-id table id)
-  (gvector-ref (table-buffer table) id))
-
-(define (get-id-from-tuple table tuple)
-  (define lookup-index (get-lookup-index table))
-  (define ids (index-ref lookup-index tuple))
-
-  (when (> (set-count ids) 1) (raise "Set semantics is violated"))
-  (if (set-empty? ids) #f
-      (set-first ids)
-      ))
-
-(define (table-full-sig table)
-  (define arity (table-arity table))
-  (make-bit-vector arity #t))
-
-(define (get-lookup-index table)
-  (define full-sig (table-full-sig table))
-  ;; such an index should always exist
-  (get-index! table full-sig))
-
-(define (get-index! table sig)
-  (define indexes (table-indexes table))
-  (define (create-index)
-    (define lookup-index (get-lookup-index table))
-    (define hash (make-hash))
-    (for ([(tuple ids) (in-index lookup-index)])
-      (when (> (set-count ids) 1)
-        (raise "Set semantics is violated"))
-      (define id (set-first ids))
-      (set-add! (hash-ref! hash
-                           (apply-sig sig tuple)
-                           (thunk (mutable-set)))
-                id))
-    (index sig hash))
-  (hash-ref! indexes sig create-index))
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; Indexes
-
-(struct index
-  (sig
-   hash) #:transparent)
-
-(define (make-index sig)
-  (index sig
-         (make-hash)))
-
-;; Takes a pattern, returns all the ids for that pattern
-(define (index-ref index access-pattern [default (thunk (mutable-set))])
-  (hash-ref (index-hash index) access-pattern default))
-
-(define (index-add! index tuple id)
-  (define hash (index-hash index))
-  (define sig (index-sig index))
-  (define pat (apply-sig sig tuple))
-  (define ids (hash-ref! hash pat (thunk (mutable-set))))
-  (set-add! ids id))
-
-(define (index-remove! index tuple id)
-  (define hash (index-hash index))
-  (define sig (index-sig index))
-  (define pat (apply-sig sig tuple))
-  (define ids (hash-ref hash pat))
-  (set-remove! ids id)
-  (when (zero? (set-count ids))
-    (hash-remove! hash pat)
-    ))
-
-(define (index-keys index)
-  (define hash (index-hash index))
-  (hash-keys hash))
-
-(define in-index (compose in-hash index-hash))

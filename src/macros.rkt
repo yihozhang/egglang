@@ -1,9 +1,10 @@
 #lang racket/base
 
-(require (for-syntax racket/base))
+(require (for-syntax racket/base racket/syntax))
 (require "egraph.rkt"
          "ast.rkt"
-         "type.rkt")
+         "type.rkt"
+         "terms.rkt")
 
 (provide (all-defined-out))
 
@@ -57,7 +58,7 @@
      (let* ([r (rule (quote name)
                      (make-query query)
                      (make-actions actions))]
-            [_ (register-rule (current-egraph) r #:ruleset (current-ruleset))])
+            [_ (register-rule r)])
        (void))]
     [(make-rule query actions)
      (make-rule query actions :name (rule query actions))]))
@@ -72,30 +73,30 @@
 (define-syntax make-sort
   (syntax-rules ()
     [(make-sort sort-name)
-     (define sort-name (let* ([s (sort (quote sort-name))]
-                              [_ (register-sort (current-egraph) s)])
-                         s))]))
+     (begin
+       (define sort-name (sort (quote sort-name)))
+       (register-sort (current-egraph) sort-name))]))
 
 (define-syntax make-term
   (syntax-rules ()
     [(make-term term-name)
-     (define term-name (let* ([s (term (quote term-name))]
-                              [_ (register-term (current-egraph) s)])
-                         s))]))
+     (begin
+       (define term-name (term (quote term-name)))
+       (register-term (current-egraph) term-name))]))
 
 (define-syntax make-function
   (syntax-rules ()
     [(make-function (name inputs ...) output)
-     (define name (let* ([f (function (quote name) (cons (list inputs ...) output) #f)]
-                         [_ (register-function (current-egraph) f)])
-                    f))]))
+     (begin
+       (define name (function (quote name) (cons (list inputs ...) output) #f))
+       (register-function (current-egraph) name))]))
 
 (define-syntax make-constructor
   (syntax-rules ()
-    [(make-function (name inputs ...) output)
-     (define name (let* ([f (function (quote name) (cons (list inputs ...) output) #t)]
-                         [_ (register-constructor (current-egraph) f)])
-                    f))]))
+    [(make-constructor (name inputs ...) output)
+     (begin
+       (define name (function (quote name) (cons (list inputs ...) output) #t))
+       (register-constructor (current-egraph) name))]))
 
 (define-syntax make-relation
   (syntax-rules ()
@@ -114,15 +115,27 @@
     [(make-rewrite lhs rhs)
      (make-rewrite lhs rhs :when () :name (rewrite lhs rhs))]))
 
-(define-syntax make-datatype
-  (syntax-rules ()
+(define-syntax (make-datatype stx)
+  (syntax-case stx ()
     [(make-datatype D (func args ...) ...)
-     (define-values (D func ...)
-       (let ()
-         (make-sort D)
-         (make-constructor (func args ...) D)
-         ...
-         (values D func ...)))]))
+     (let ([@ (lambda (stx) (format-id #'D "~a@" stx))])
+       (with-syntax ([D@ (@ #'D)]
+                     [(func+ ...) (map @ (syntax->list #'(func ...)))]
+                     [D:=>@ (format-id #'D "~a:=>@" #'D)]
+                     [D:@=> (format-id #'D "~a:@=>" #'D)])
+         #'(begin
+             (make-sort D)
+             (make-term D@)
+             (make-function (D:=>@ D) D@)
+             (make-function (D:@=> D@) D)
+             (register-sort-term-pair D D@ D:=>@ D:@=>)
+             (make-constructor (func args ...) D)
+             ...
+             (make-constructor (func+ (get-term-or-id args) ...) D@)
+             ...
+             (make-@-rules D D:@=> D:=>@ (list (list func func+ args ...) ...))
+             )))])
+  )
 
 (define-syntax make-run-action!
   (syntax-rules ()

@@ -27,7 +27,7 @@
 (struct core-rule (name query actions) #:transparent)
 
 ;; constant
-(define false-atom (core-atom False '()))
+(define false-atom (core-atom Impossible '()))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Lowering/flattening to the core
@@ -233,8 +233,7 @@
 (define (compile-query query egraph)
   (define fake-rule (rule 'dummy query (actions '())))
   (define compiled-rule (compile fake-rule egraph))
-  (core-rule-query compiled-rule)
-  )
+  (core-rule-query compiled-rule))
 
 (define (compile rule egraph)
   (define passes

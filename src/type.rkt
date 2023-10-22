@@ -24,7 +24,7 @@
          ;; make-set and merge
          new-value! merge-fn!
          canonicalize
-         False
+         Impossible
          make-uf-mapper)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -34,7 +34,7 @@
 (define u64 'u64)
 (define String 'String)
 (define Rational 'Rational)
-(define unit '())
+(define unit 'unit)
 (struct semilattice (name dom bot join))
 (struct sort (name) #:transparent)
 (struct term (name) #:transparent)
@@ -46,6 +46,7 @@
     ['u64 'u64]
     ['Rational 'Rational]
     ['String 'String]
+    ['unit 'unit]
     [(sort name) `(sort ,name)]
     [(term name) `(term ,name)]))
 
@@ -56,6 +57,7 @@
     ['u64 'u64]
     ['Rational 'Rational]
     ['String 'String]
+    ['unit 'unit]
     [(sort name) name]
     [(term name) name]))
 
@@ -66,7 +68,7 @@
 
 (define (literal-type? type)
   (match type
-    [(or 'i64 'u64 'Rational 'String) #t]
+    [(or 'i64 'u64 'Rational 'String 'unit) #t]
     [_ #f]))
 
 (define (make-uf-mapper) (make-hash))
@@ -119,7 +121,7 @@
   (cond ([function? head] (function-name head))
         ([computed-function? head] (computed-function-name head))))
 
-(define False (function 'False (cons '() unit) #f))
+(define Impossible (function 'Impossible (cons '() unit) #f))
 
 (define (show-computed-function func)
   (define name (computed-function-name func))
