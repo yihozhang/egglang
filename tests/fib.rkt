@@ -22,3 +22,7 @@
       ((set! (fib n) (+ f1 f2))))
 
 (saturate)
+
+(check (= (fib 18) 2584))
+(check (= (fib 19) 4181))
+(check (= (fib 20) 6765))

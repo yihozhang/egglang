@@ -14,9 +14,7 @@
 (function (string-of Math@) String)
 
 (rule ((= e@ (Num@ i)))
-      ((displayln i)
-       (displayln e@)
-       (set! (string-of e@) (format "(Num ~a)" i))))
+      ((set! (string-of e@) (format "(Num ~a)" i))))
 
 (rule ((= e@ (Add@ x@ y@))
        (= sx (string-of x@))
@@ -32,6 +30,6 @@
 
 (for ([i 10])
   (run1)
-  (run 10 '@))
+  (saturate '@))
 
 (pretty-print (run-query (string-of (Add@ (Add@ (Num@ 1) (Num@ 2)) (Num@ 3)))))

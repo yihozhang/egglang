@@ -374,7 +374,7 @@
                     [(computed-function? fun) (values (apply (computed-function-run fun) args+) #f)]))
             (define m+ (cons (cons var val) m))
             (define updates+ (+ updates (if updated? 1 0)))
-            (go rest m+ updates)]
+            (go rest m+ updates+)]
            [(core-let-val-action var val)
             (define val+ (eval-arg m val))
             (define m+ (cons (cons var val+) m))
