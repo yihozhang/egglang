@@ -154,11 +154,9 @@
 (define-syntax define-const
   (syntax-rules ()
     [(define-const name type value)
-     (define name
-       (let ()
-         (declare-const name type)
-         (make-run-action! (union! (name) value))
-         name))
+     (begin
+       (declare-const name type)
+       (make-run-action! (union! (name) value)))
      ]))
 
 (define-syntax make-check

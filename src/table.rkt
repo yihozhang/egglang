@@ -9,6 +9,7 @@
 
 (provide
  ;; Signature
+ pattern-hole pattern-hole? append-hole
  pattern->sig apply-sig
  ;; Table
  (struct-out table) show-table
@@ -21,24 +22,31 @@
 
 ;; A signature is a bitvector mask
 ;; where #t means it's part of the index
-;; A pattern is a signature converted to list
-;; with every #t replaced with an actual value
+;; A pattern of a given signature is a list where
+;; every element is either the actual value (if the signature is #t)
+;; or `hole` (if the signature if #f)
 
-;; TODO: don't use false for pattern, it is bad
+(define pattern-hole
+  (let ([hole (string->uninterned-symbol "hole")])
+    (thunk hole)))
+
+(define (pattern-hole? s) (equal? s (pattern-hole)))
+
+(define (append-hole tuple)
+  (append tuple (list (pattern-hole))))
 
 ;; Converts a pattern to a signature
 (define (pattern->sig pat)
   (define len (length pat))
   (for/bit-vector #:length len
     ([b pat])
-    (if b #t #f)))
+    (not (pattern-hole? b))))
 
 ;; Converts a full tuple to a pattern based on the signature
 (define (apply-sig sig tuple)
   (for/list ([b (in-bit-vector sig)]
              [v (in-list tuple)])
-    ;; trick: if b is #t, then use b, otherwise #f
-    (and b v)))
+    (if b v (pattern-hole))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Table

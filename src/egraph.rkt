@@ -127,7 +127,7 @@
 (define (eval!-function egraph function args)
   (define uf-mapper (egraph-uf-mapper egraph))
   (define table (lookup-function egraph function))
-  (define access-pattern (append args '(#f)))
+  (define access-pattern (append-hole args))
   (define tuples (table-get table access-pattern))
   (if (null? tuples)
       (let* ([otype (function-output-type function)]
@@ -142,7 +142,7 @@
 (define (set!-function egraph function args new-val)
   (define uf-mapper (egraph-uf-mapper egraph))
   (define table (lookup-function egraph function))
-  (define access-pattern (append args '(#f)))
+  (define access-pattern (append-hole args))
   (define old-vals (table-get table access-pattern #:full-tuple? #f))
 
   (unless (<= (length old-vals) 1)
@@ -296,15 +296,17 @@
   (define (go egraph atoms m)
     (define (eval-arg arg) (if (symbol? arg)
                                (let ([val (assoc arg m)])
-                                 (and val (cdr val)))
+                                 (if val (cdr val)
+                                     (pattern-hole)))
                                arg))
     (match atoms
       ['() (list m)]
       ;; core-check case
       [(cons (core-check arg) atoms+)
-       (if (eval-arg arg)
-           (go egraph atoms+ m)
-           '())]
+       (define val (eval-arg arg))
+       (cond [(pattern-hole? val) (error (format "~a is not bound" val))]
+             [(not val) '()]
+             [else (go egraph atoms+ m)])]
       ;; core-atom case
       [(cons (core-atom fun args) atoms+)
        (let ([pat (map eval-arg args)])
@@ -314,7 +316,7 @@
                 (define result (table-get table pat #:full-tuple? #t))
                 (define (bound-and-proceed tuple)
                   (define-values (m+ valid?)
-                    ;  `valid?` is used to handle non-linear patterns
+                    ; `valid?` is used to handle non-linear patterns
                     (for/fold ([m m] [valid? #t])
                               ([arg args]
                                [tuple-val tuple]
@@ -335,10 +337,10 @@
                 (define-values (in-pats out-pats) (split-at-right pat 1))
                 (define out-pat (only out-pats))
                 ;; unless all arguments at an input position can be instantiated
-                (unless (andmap identity in-pats)
-                  (raise (format "Cannot execute query as ~a cannot be fully instantiated" (car atoms))))
+                (when (ormap pattern-hole? in-pats)
+                  (raise (format "Cannot execute query as ~a cannot be fully instantiated." (car atoms))))
                 (define computed-val (apply (computed-function-run fun) in-pats))
-                (cond [(not out-pat) (go egraph atoms+ (cons (cons (last args) computed-val) m))]
+                (cond [(pattern-hole? out-pat) (go egraph atoms+ (cons (cons (last args) computed-val) m))]
                       [(equal? out-pat computed-val) (go egraph atoms+ m)]
                       [else '()])]
                [else (raise (format "unsupported atom ~a" (car atoms)))]

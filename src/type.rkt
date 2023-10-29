@@ -6,6 +6,7 @@
 
 (provide i64 u64 String Rational unit
          semilattice
+         semilattice?
          sort term
          sort? term?
          show-base-type base-type-name
@@ -25,7 +26,7 @@
          new-value! merge-fn!
          canonicalize
          Impossible
-         make-uf-mapper)
+         make-uf-mapper uf-mapper-copy)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; base types
@@ -71,7 +72,8 @@
     [(or 'i64 'u64 'Rational 'String 'unit) #t]
     [_ #f]))
 
-(define (make-uf-mapper) (make-hash))
+(define make-uf-mapper make-hash)
+(define uf-mapper-copy hash-copy)
 
 (define (new-value! uf-mapper type)
   (cond [(or (sort? type)
