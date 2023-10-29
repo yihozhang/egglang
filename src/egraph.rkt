@@ -211,9 +211,8 @@
 (define (run-action! action [cause 'user-action] [egraph (current-egraph)])
   (define as (actions (list action)))
   (define core-actions (flatten-actions as))
-  (define-values (m updates)
-    (run-core-actions! egraph core-actions cause))
-  m)
+  (run-core-actions! egraph core-actions cause)
+  (void))
 
 (define (run-query query [egraph (current-egraph)])
   ;; TODO: For now, let's just rebuild the egraph manually
