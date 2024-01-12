@@ -13,10 +13,15 @@
   (set! timestamp (add1 ts))
   ts)
 
+;; ts and rev? are used for finding are constructing proofs
 (struct union-record
-  (fr
+  (;; from
+   fr
+   ;; to
    to
+   ;; justification
    jus
+   ;; timestamp
    ts
    ;; Is the union operation applied reversely
    rev?)

@@ -190,6 +190,8 @@
 (define (get-@=> sort (egraph (current-egraph)))
   (hash-ref (egraph-sort->@=> egraph) sort))
 
+;; If maybe-sort is a sort with corresponding term, returns the term
+;; Otherwise, this is an identity function.
 (define (get-term-or-id maybe-sort (egraph (current-egraph)))
   (hash-ref (egraph-sort->term egraph) maybe-sort maybe-sort))
 
@@ -211,7 +213,8 @@
 (define (run-action! action [cause 'user-action] [egraph (current-egraph)])
   (define as (actions (list action)))
   (define core-actions (flatten-actions as))
-  (run-core-actions! egraph core-actions cause)
+  (define jus (make-user-defined-jus cause))
+  (run-core-actions! egraph core-actions jus)
   (void))
 
 (define (run-query query [egraph (current-egraph)])
@@ -350,9 +353,7 @@
 
 ;; Returns the result context after running actions
 ;; as well as the number of updated tuples
-(define (run-core-actions! egraph actions [cause #f] [m '()])
-  ;; context will be updated at the end
-  (define jus (justification cause #f))
+(define (run-core-actions! egraph actions [jus #f] [m '()])
   (define (eval-arg m arg)
     (if (symbol? arg)
         (cdr (assoc arg m))
@@ -396,7 +397,8 @@
             ;; We don't update counts for union, as
             ;; this will be taken care of during rebuilding
             (go rest m updates)])]
-        ['() (values m updates)])))
+        ['()
+         (values m updates)])))
 
   (set-justification-context! jus m)
   (values context updates))
