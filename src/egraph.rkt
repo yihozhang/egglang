@@ -358,11 +358,10 @@
     (if (symbol? arg)
         (cdr (assoc arg m))
         arg))
+
+  ;; Step 1: evaluating actions
   (define-values (context updates)
     (let go ([actions (core-actions-actions actions)]
-             ;; TODO termify converts e-classes in the context to corresponding
-             ;; terms. Not yet sure how this will work out
-             [m (termify egraph m)]
              ;; Number of updates to the database
              [updates 0])
       (match actions
@@ -400,7 +399,11 @@
         ['()
          (values m updates)])))
 
-  (set-justification-context! jus m)
+  ;; Step 2: Register proofs for the term graph
+  (define termified-context (termify egraph context))
+  
+
+  (set-justification-context! jus context)
   (values context updates))
 
 (define (rebuild egraph)
