@@ -8,6 +8,7 @@
 (provide make-@-rules)
 
 (define (make-@-rules D D:@=> D:=>@ constructors)
+  ;; conversion rules from datatype to datatype@ (terms)
   (define @=>-rules
     (for/list ([constructor-sig (in-list constructors)])
       (define func (car constructor-sig))
@@ -41,6 +42,7 @@
                                            (function-name func+))))
       (rule name q as)))
 
+  ;; conversion rules from datatype@ (terms) to datatype
   (define =>@-rule
     (let ()
       ;; (rule ((= e (D:@=> e@)))
@@ -54,5 +56,3 @@
     (for ([rule (in-list @=>-rules)])
       (register-rule rule))
     (register-rule =>@-rule)))
-
-

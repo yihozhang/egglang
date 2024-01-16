@@ -84,24 +84,34 @@
        (define term-name (term (quote term-name)))
        (register-term (current-egraph) term-name))]))
 
+(define-syntax make-function-impl
+  (syntax-rules (:intrinsic? :constructor?)
+    [(make-function-impl (name inputs ...) output :constructor? c :intrinsic? i)
+     (begin
+       (define name (function (quote name) (cons (list inputs ...) output) c i))
+       (if c
+           (register-constructor (current-egraph) name)
+           (register-function (current-egraph) name)))]))
+
 (define-syntax make-function
   (syntax-rules ()
     [(make-function (name inputs ...) output)
-     (begin
-       (define name (function (quote name) (cons (list inputs ...) output) #f))
-       (register-function (current-egraph) name))]))
+     (make-function-impl (name inputs ...) output :constructor? #f :intrinsic? #f)]))
 
 (define-syntax make-constructor
   (syntax-rules ()
     [(make-constructor (name inputs ...) output)
-     (begin
-       (define name (function (quote name) (cons (list inputs ...) output) #t))
-       (register-constructor (current-egraph) name))]))
+     (make-function-impl (name inputs ...) output :constructor? #t :intrinsic? #f)]))
+
+(define-syntax make-intrinsic-function
+  (syntax-rules ()
+    [(make-intrinsic-function (name inputs ...) output)
+     (make-function-impl (name inputs ...) output :constructor? #f :intrinsic? #t)]))
 
 (define-syntax make-relation
   (syntax-rules ()
     [(make-relation (name inputs ...))
-     (make-function (name inputs ...) unit)]))
+     (make-function (name inputs ...) unit-lat)]))
 
 (define-syntax make-rewrite
   (syntax-rules (:when :name)
@@ -126,12 +136,14 @@
          #'(begin
              (make-sort D)
              (make-term D@)
-             (make-function (D:=>@ D) D@)
-             (make-function (D:@=> D@) D)
+             (make-intrinsic-function (D:=>@ D) D@)
+             (make-intrinsic-function (D:@=> D@) D)
              (register-sort-term-pair D D@ D:=>@ D:@=>)
              (make-constructor (func args ...) D)
              ...
              (make-constructor (func+ (get-term-or-id args) ...) D@)
+             ...
+             (register-cstr-cstr@-pair func func+)
              ...
              (make-@-rules D D:@=> D:=>@ (list (list func func+ args ...) ...))
              )))])
@@ -142,21 +154,26 @@
     [(make-run-action! action)
      (run-action! (make-action action))]))
 
-(define-syntax declare-const
-  (syntax-rules ()
+(define-syntax (declare-const stx)
+  (syntax-case stx ()
     [(declare-const name type)
-     (define name
-       (let ()
-         (make-function (name) type)
-         (make-run-action! (name))
-         name))]))
+     (let ([@ (lambda (stx) (format-id #'D "~a@" stx))])
+       (with-syntax ([name@ (@ #'name)])
+         #'(begin
+             (make-constructor (name) type)
+             (define type@ (get-term type))
+             (make-constructor (name@) type@)
+             (register-cstr-cstr@-pair name name@)
+             (make-run-action! (name))
+             (make-run-action! (name@))
+             )))]))
 
 (define-syntax define-const
   (syntax-rules ()
     [(define-const name type value)
      (begin
        (declare-const name type)
-       (make-run-action! (union! (name) value)))
+       (make-run-action! (set! (name) value)))
      ]))
 
 (define-syntax make-check

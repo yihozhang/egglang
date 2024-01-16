@@ -5,6 +5,7 @@
          "union-find.rkt")
 
 (provide i64 u64 String Rational unit
+         min-nat unit-lat
          semilattice
          semilattice?
          sort term
@@ -16,6 +17,7 @@
          function? show-function function-name
          function-input-types function-output-type
          function-arity
+         function-intrinsic? function-constructor?
          ;; computed function related
          computed-function
          computed-function?
@@ -39,6 +41,9 @@
 (struct semilattice (name dom bot join))
 (struct sort (name) #:transparent)
 (struct term (name) #:transparent)
+
+(define min-nat (semilattice 'min-nat u64 0 +))
+(define unit-lat (semilattice 'unit-lat unit '() (lambda (x y) '())))
 
 (define (show-base-type type)
   (match type
@@ -82,19 +87,17 @@
                                 (hash-set! uf-mapper sym uf-val)
                                 sym)]
         [(semilattice? type) (semilattice-bot type)]
-        [(equal? unit type) '()]
         [else (raise (format "no default value for ~a" type))]))
 
 (define (merge-fn! uf-mapper type vals)
   (cond [(sort? type)        (define canon-uf-val
-                               (foldl (lambda (l acc) (uf-union! (hash-ref uf-mapper l) acc 'todo))
-                                      (hash-ref uf-mapper (car vals))
+                               (foldl (lambda (l acc) (uf-union! uf-mapper l acc))
+                                      (car vals)
                                       (cdr vals)))
-                             (eclass-id canon-uf-val)]
+                             canon-uf-val]
         ;;  terms implement the choice operator of Datalog
         [(term? type) (car vals)]
         [(semilattice? type) (foldl (semilattice-join type) (car vals) (cdr vals))]
-        [(equal? unit type) '()]
         [else (if (andmap (curry equal? (car vals)) (cdr vals))
                   (car vals)
                   (raise (format "merge function is not supported for ~a" type)))]))
@@ -111,6 +114,7 @@
    ;; a pair of input types and output type
    types
    constructor?
+   intrinsic?
    )
   #:transparent)
 
@@ -123,7 +127,7 @@
   (cond ([function? head] (function-name head))
         ([computed-function? head] (computed-function-name head))))
 
-(define Impossible (function 'Impossible (cons '() unit) #f))
+(define Impossible (function 'Impossible (cons '() unit-lat) #f #t))
 
 (define (show-computed-function func)
   (define name (computed-function-name func))
@@ -139,4 +143,3 @@
 (define function-input-types (compose car function-types))
 (define function-output-type (compose cdr function-types))
 (define function-arity (compose add1 length function-input-types))
-(define min-nat (semilattice 'min-nat u64 0 +))

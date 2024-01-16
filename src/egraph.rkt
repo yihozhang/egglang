@@ -5,7 +5,9 @@
          register-function register-constructor
          egraph-functions
          ;; sort and term
-         register-sort register-term register-sort-term-pair get-term-or-id
+         register-sort register-term
+         register-sort-term-pair register-cstr-cstr@-pair
+         get-term-or-id get-term
          get-=>@ get-@=>
          egraph-sorts
          ;; rules
@@ -42,6 +44,8 @@
    sort->term
    sort->@=>
    sort->=>@
+   cstr->cstr@
+   cstr@->cstr
    ;; Hash map from ruleset names to gvectors of
    ;; rule names
    rulesets
@@ -49,11 +53,12 @@
    rules
    ;; Hash map from symbols to E-class ids
    uf-mapper
-   ;; #t if proof is generated
-   proof?
+   ;; #f if no proof is needed
+   proof-manager
    ))
 
 (define (make-egraph #:proof? [proof? #f])
+  (define proof-manager (or proof? (make-proof-manager)))
   (egraph
    ;; functions
    (make-hash (list (cons Impossible (make-table 'Impossible 0))))
@@ -69,14 +74,18 @@
    (make-hash)
    ;; sort->=>@
    (make-hash)
+   ;; cstr->cstr@
+   (make-hash)
+   ;; cstr@->cstr
+   (make-hash)
    ;; rulesets
    (make-hash (list (cons 'main (make-gvector))))
    ;; rules
    (make-hash)
    ;; uf-mapper
    (make-uf-mapper)
-   ;; proof?
-   proof?
+   ;; proof-manager
+   proof-manager
    ))
 
 (define (show-egraph egraph)
@@ -115,6 +124,12 @@
 
   (register-function egraph function))
 
+(define (register-cstr-cstr@-pair cstr cstr@ (egraph (current-egraph)))
+  (define cstr->cstr@ (egraph-cstr->cstr@ egraph))
+  (define cstr@->cstr (egraph-cstr@->cstr egraph))
+  (hash-set! cstr->cstr@ cstr cstr@)
+  (hash-set! cstr@->cstr cstr@ cstr))
+
 ;; Returns a table corresponding to the table
 (define (lookup-function egraph function)
   (define functions (egraph-functions egraph))
@@ -138,7 +153,10 @@
       (values (only (only tuples)) #f)))
 
 ;; Runs the `set` action on the given function
-;; Returns true if the database if updated
+;; If the entry does not exist before, return (list 'inserted)
+;; If the entry exists and the value is updated, return (list 'updated old-val join-val)
+;;   where old-val is the value before the update, and join-val is (merge-fn old-val new-val)
+;; If the entry exists and the value is not updated, return (list 'not-updated)
 (define (set!-function egraph function args new-val)
   (define uf-mapper (egraph-uf-mapper egraph))
   (define table (lookup-function egraph function))
@@ -152,18 +170,18 @@
       ;; Tuple does not exist, insert into the database
       (let ([new-tuple (append args (list new-val))])
         (table-append! table new-tuple)
-        #t)
+        '(inserted))
 
       (let* ([old-val (only (only old-vals))]
              [otype (function-output-type function)]
-             [val (merge-fn! uf-mapper otype (list old-val new-val))])
-        (if (not (equal? old-val val))
+             [join-val (merge-fn! uf-mapper otype (list old-val new-val))])
+        (if (not (equal? old-val join-val))
             (let ([old-tuple (append args (list old-val))]
-                  [new-tuple (append args (list val))])
+                  [new-tuple (append args (list join-val))])
               (table-remove! table old-tuple)
               (table-append! table new-tuple)
-              #t)
-            #f))
+              (list 'updated old-val join-val))
+            '(not-updated)))
       ))
 
 ;; Registers a sort
@@ -190,8 +208,13 @@
 (define (get-@=> sort (egraph (current-egraph)))
   (hash-ref (egraph-sort->@=> egraph) sort))
 
+;; If maybe-sort is a sort with corresponding term, returns the term
+;; Otherwise, this is an identity function.
 (define (get-term-or-id maybe-sort (egraph (current-egraph)))
   (hash-ref (egraph-sort->term egraph) maybe-sort maybe-sort))
+
+(define (get-term maybe-sort (egraph (current-egraph)))
+  (hash-ref (egraph-sort->term egraph) maybe-sort))
 
 ;; Registers a rule
 (define (register-rule rule [egraph (current-egraph)] [ruleset (current-ruleset)])
@@ -211,7 +234,8 @@
 (define (run-action! action [cause 'user-action] [egraph (current-egraph)])
   (define as (actions (list action)))
   (define core-actions (flatten-actions as))
-  (run-core-actions! egraph core-actions cause)
+  (define jus (user-jus cause))
+  (run-core-actions! egraph core-actions jus)
   (void))
 
 (define (run-query query [egraph (current-egraph)])
@@ -260,7 +284,8 @@
         (displayln (format "Running ~a for ~a times" (core-rule-name rule) (length ms))))
       (for/sum ([m ms])
         ;; TODO: rule should contain original AST
-        (define-values (m+ update-count) (run-core-actions! egraph actions rule m))
+        (define jus (rule-jus rule #f))
+        (define-values (m+ update-count) (run-core-actions! egraph actions jus m))
         update-count)))
 
   ;; rebuild
@@ -348,20 +373,56 @@
 
   (go egraph (core-query-atoms query) '()))
 
+;; Gets the representative term value of a sort value
+;; TODO: question: if the expr is just created by an earlier action in
+;; a sequence of actions, and no =>@ rule is run in between,
+;; how can we still get the repr term out of an expr?
+(define (get-repr-term egraph sort expr)
+  (if (sort? sort)
+      (let ()
+        (define =>@ (hash-ref (egraph-sort->=>@ egraph) sort))
+        (define =>@-table (lookup-function egraph =>@))
+        (define access-pattern (append-hole (list expr)))
+        (define tuples (table-get =>@-table access-pattern))
+        (unless (= (length tuples) 1)
+          (error (format "Trying to find the term version of ~a, which has type ~a" expr sort)))
+        (only (only tuples)))
+      expr))
+
+;; Inserts the term version of the E-node into the database
+;; Returns the term value
+(define (eval!-term-function egraph fun args sort-val)
+  (define arg-types (function-input-types fun))
+  (define out-type (function-output-type fun))
+  (define args-term (map (curry get-repr-term egraph) arg-types args))
+  (define cstr@ (hash-ref (egraph-cstr->cstr@ egraph) fun))
+  (define-values (term-val _updated) (eval!-function egraph cstr@ args-term))
+  (define @=> (hash-ref (egraph-sort->@=> egraph) out-type))
+  (define =>@ (hash-ref (egraph-sort->=>@ egraph) out-type))
+  (set!-function egraph @=> (list term-val) sort-val)
+  (set!-function egraph =>@ (list sort-val) term-val)
+
+  term-val)
+
+(define (can-generate-proof? function)
+  (not (or (ormap term? (function-input-types function))
+           (term? (function-output-type function)))))
+
 ;; Returns the result context after running actions
 ;; as well as the number of updated tuples
-(define (run-core-actions! egraph actions [cause #f] [m '()])
-  ;; context will be updated at the end
-  (define jus (justification cause #f))
+(define (run-core-actions! egraph actions jus [m '()])
+  (unless (or (rule-jus? jus) (user-jus? jus))
+    (error "jus must be either a rule-jus or a user-jus"))
+
   (define (eval-arg m arg)
     (if (symbol? arg)
         (cdr (assoc arg m))
         arg))
+
+  (define proof-manager (egraph-proof-manager egraph))
   (define-values (context updates)
     (let go ([actions (core-actions-actions actions)]
-             ;; TODO termify converts e-classes in the context to corresponding
-             ;; terms. Not yet sure how this will work out
-             [m (termify egraph m)]
+             [m m]
              ;; Number of updates to the database
              [updates 0])
       (match actions
@@ -371,8 +432,19 @@
             (define args+ (map (curry eval-arg m) args))
             (define-values (val updated?)
               (cond [(function? fun) (eval!-function egraph fun args+)]
-                    ;; [(function? fun) (eval!-function egraph fun args+ jus)]
                     [(computed-function? fun) (values (apply (computed-function-run fun) args+) #f)]))
+
+            (when (and proof-manager updated? (can-generate-proof? fun))
+              (define output-type (function-output-type fun))
+              (cond
+                [(sort? output-type)
+                 (define term-val (eval!-term-function egraph fun args+ val))
+                 (add-term-proof proof-manager term-val jus)]
+                [(semilattice? output-type)
+                 (define arg+-types (function-input-types fun))
+                 (define args+-term (map (curry get-repr-term egraph) arg+-types args+))
+                 (add-fact-proof proof-manager fun args+-term val jus)]))
+
             (define m+ (cons (cons var val) m))
             (define updates+ (+ updates (if updated? 1 0)))
             (go rest m+ updates+)]
@@ -383,110 +455,143 @@
            [(core-set-action fun args expr)
             (define args+ (map (curry eval-arg m) args))
             (define expr+ (eval-arg m expr))
-            ;; (set!-function egraph fun args+ expr+ jus)
-            (define updated? (set!-function egraph fun args+ expr+))
+            (define update-status (set!-function egraph fun args+ expr+))
+            (define updated? (not (equal? update-status '(not-updated))))
             (define updates+ (+ updates (if updated? 1 0)))
+
+            (when (and proof-manager updated? (can-generate-proof? fun))
+              (define arg+-types (function-input-types fun))
+              (define args+-term (map (curry get-repr-term egraph) arg+-types args+))
+              (define output-type (function-output-type fun))
+              (match update-status
+                ['(inserted)
+                 (cond [(sort? output-type)
+                        (define term-val (eval!-term-function egraph fun args+ expr+))
+                        (add-term-proof proof-manager term-val jus)
+                        (define expr+-term (get-repr-term egraph output-type expr+))
+                        (add-equiv-proof proof-manager term-val expr+-term jus)
+                        ]
+                       [(semilattice? output-type)
+                        (add-fact-proof proof-manager fun args+-term expr+ jus)
+                        ]
+                       )]
+                [(list 'updated old-val join-val)
+                 (cond [(sort? output-type)
+                        (define expr+-term (get-repr-term egraph output-type expr+))
+                        (define old-val-term (get-repr-term egraph output-type old-val))
+                        (add-equiv-proof proof-manager old-val-term expr+-term jus)
+                        ]
+                       [(semilattice? output-type)
+                        (add-fact-proof proof-manager fun args+-term expr+ jus)
+                        (define join-justification (join-jus (cons expr+ old-val)))
+                        (add-fact-proof proof-manager fun args+-term join-val join-justification)
+                        ])
+                 ]))
+
             (go rest m updates+)]
            [(core-union-action v1 v2)
-            ;; TODO: refactor this
             (define uf-mapper (egraph-uf-mapper egraph))
-            (define v1+ (hash-ref uf-mapper (eval-arg m v1)))
-            (define v2+ (hash-ref uf-mapper (eval-arg m v2)))
-            (uf-union! v1+ v2+ jus)
+            (define v1+ (eval-arg m v1))
+            (define v2+ (eval-arg m v2))
+            (uf-union! uf-mapper v1+ v2+)
+
+            (when proof-manager
+              ;; TODO: make substitution also contain type information
+              (define v1-term (get-repr-term egraph v1+))
+              (define v2-term (get-repr-term egraph v2+))
+              (uf-union! v1-term v2-term)
+              (add-equiv-proof proof-manager v1-term v2-term jus))
+
             ;; We don't update counts for union, as
             ;; this will be taken care of during rebuilding
             (go rest m updates)])]
-        ['() (values m updates)])))
+        ['()
+         (values m updates)])))
 
-  (set-justification-context! jus m)
+  ;; Step 2: Register proofs for the term graph
+  (when (rule-jus? jus)
+    (define termified-context (termify egraph context))
+    (set-rule-jus-context! jus termified-context))
+
   (values context updates))
 
 (define (rebuild egraph)
   (define uf-mapper (egraph-uf-mapper egraph))
   (define functions (egraph-functions egraph))
-  (define (rebuild-once)
-    (for/sum ([fun (in-hash-keys functions)])
+
+  (define proof-manager (egraph-proof-manager egraph))
+  (define (rebuild-once intrinsic?)
+    (for/sum ([fun (in-hash-keys functions)]
+              #:when (equal? (function-intrinsic? fun) intrinsic?))
       (define arity (function-arity fun))
       ;; could be refactored into a function
       (define full-type (append (function-input-types fun)
                                 (list (function-output-type fun))))
       (define update-count 0)
-      (hash-update! functions fun
-                    ;; TODO: this is slower than just throwing away the old database
-                    ;; and build a new one.
-                    ; (lambda (table)
-                    ;   (define tab-list (table->list table))
-                    ;   ;; canonicalize every tuple
-                    ;   (for ([tuple tab-list])
-                    ;     (define new-tuple (map canonicalize full-type tuple))
-                    ;     (unless (equal? new-tuple tuple)
-                    ;       (table-remove! table tuple)
-                    ;       (table-append! table new-tuple))
-                    ;     )
+      (hash-update!
+       functions fun
+       (lambda (table)
+         (define tab-list (table->list table))
+         ;; a list of (cons canonicalized-tuple original-tuple)
+         (define canon-tab-list
+           (for/list ([tuple tab-list])
+             (define new-tuple (map (curry canonicalize uf-mapper) full-type tuple))
+             (unless (equal? new-tuple tuple)
+               (set! update-count (add1 update-count)))
+             (cons new-tuple tuple)))
+         (define grouped-by
+           (group-by (lambda (tuple-pair) (drop-right (car tuple-pair) 1)) canon-tab-list))
 
-                    ;   ;; resolve conflicts
-                    ;   (define key-index
-                    ;     (let* ([sig (make-bit-vector arity #t)]
-                    ;            [_ (bit-vector-set! sig (sub1 arity) #f)])
-                    ;       (get-index! table sig)))
-                    ;   (define otype (function-output-type fun))
-                    ;   (define-values (to-adds to-removes)
-                    ;     (for/fold ([to-adds '()]
-                    ;                [to-removes '()])
-                    ;               ([(key ids) (in-hash (index-hash key-index))]
-                    ;                #:when (> (set-count ids) 1))
-                    ;       (define old-tuples (set-map ids (curry table-get-by-id table)))
-                    ;       (define old-vals (map last old-tuples))
-                    ;       (define new-out-val (merge-fn! otype old-vals))
-                    ;       (define tuple (list-set (first old-tuples) (sub1 arity) new-out-val))
-                    ;       (values (cons tuple to-adds) (append old-tuples to-removes))
-                    ;       ))
-                    ;   (for-each (curry table-remove! table) to-removes)
-                    ;   (for-each (curry table-append! table) to-adds)
+         (define new-table (make-table (table-name table) arity))
+         (define itypes (function-input-types fun))
+         (define otype (function-output-type fun))
+         (define count
+           (for*/sum ([group (in-list grouped-by)])
+             (define len (length group))
 
-                    ;   (define count (- (length to-removes) (length to-adds)))
-                    ;   (set! update-count (+ update-count count))
+             (if (= len 1)
+                 (let ()
+                   (define tuple-pair (first group))
+                   (define tuple (car tuple-pair))
+                   (table-append! new-table tuple))
+                 (let ()
+                   (define out-vals (map (compose last car) group))
+                   (define new-out-val (merge-fn! uf-mapper otype out-vals))
+                   (define tuple (list-set (car (first group)) (sub1 arity) new-out-val))
+                   (table-append! new-table tuple)
 
-                    ;   table)
-
-                    (lambda (table)
-                      (define tab-list (table->list table))
-                      (define canon-tab-list
-                        (for/list ([tuple tab-list])
-                          (define new-tuple (map (curry canonicalize uf-mapper) full-type tuple))
-                          (unless (equal? new-tuple tuple)
-                            (set! update-count (add1 update-count)))
-                          new-tuple))
-                      (define grouped-by
-                        (group-by (lambda (tuple) (drop-right tuple 1)) canon-tab-list))
-
-                      (define new-table (make-table (table-name table) arity))
-                      (define otype (function-output-type fun))
-                      (define count
-                        (for*/sum ([group (in-list grouped-by)])
-                          (define len (length group))
-
-                          (if (= len 1)
-                              (table-append! new-table (first group))
-                              (let ()
-                                (define out-vals (map last group))
-                                (define new-out-val (merge-fn! uf-mapper otype out-vals))
-                                (define tuple (list-set (first group) (sub1 arity) new-out-val))
-                                (table-append! new-table tuple)))
-
-                          (sub1 len)))
-
-                      (set! update-count (+ update-count count))
-                      new-table)
-
-                    )
+                   (when (and proof-manager (can-generate-proof? fun))
+                     (define canon-inps (drop-right tuple 1))
+                     (define canon-inps-term (map (curry get-repr-term egraph) itypes canon-inps))
+                     (cond [(sort? otype)
+                            (define new-out-term-val (get-repr-term egraph otype new-out-val))
+                            (define original-tuples (map cdr group))
+                            (for ([original-tup original-tuples])
+                              (define original-out-val (last original-tup))
+                              (when (not (equal? original-out-val new-out-val))
+                                (define original-inps (drop-right original-tup 1))
+                                (define original-inps-term (map (curry get-repr-term egraph) itypes original-inps))
+                                (define original-out-term-val (get-repr-term egraph otype original-out-val))
+                                (define jus (cong-jus fun canon-inps-term original-inps-term))
+                                (add-equiv-proof proof-manager new-out-term-val original-out-term-val jus)
+                                )) ]
+                           [(semilattice? otype)
+                            (define join-justification (join-jus out-vals))
+                            (add-fact-proof proof-manager fun canon-inps-term new-out-val join-justification)])
+                     )))
+             (sub1 len)))
+         (set! update-count (+ update-count count))
+         new-table)
+       )
       update-count))
-  (let rebuild ([count 0])
-    (define new (rebuild-once))
-    (if (zero? new)
-        count
-        (rebuild (+ count new)))
-    ))
+  ;; TODO: this is ugly
+  (first (for/list ([intrinsic? (in-list (list #f #t))])
+           (let rebuild ([count 0])
+             (define new (rebuild-once intrinsic?))
+             (if (zero? new)
+                 count
+                 (rebuild (+ count new)))
+             ))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Utility commands
