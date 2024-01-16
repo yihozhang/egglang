@@ -3,30 +3,45 @@
 (require racket/match
          "core.rkt")
 
-(provide (struct-out justification)
-         (rename-out [user-defined-jus make-user-defined-jus])
+(provide (struct-out user-jus)
+         (struct-out rule-jus)
+         (struct-out cong-jus)
+         (struct-out join-jus)
+         make-proof-manager
+         add-term-proof
+         add-fact-proof
+         add-equiv-proof
          termify)
-
-(struct user-defined-jus
-  (cause))
-
-(struct justification
-  (cause
-   [context #:mutable]))
+;; There are four kinds of justifications:
+;;  1. User-defined justification
+;;  2. Rule-based justification
+;;  3. Congruence
+;;  4. Lattice-join justification
+(struct user-jus (cause))
+(struct rule-jus (cause [context #:mutable]))
+(struct cong-jus (fun args1 args2))
+;; vals is a list of lattice values (cons val1 val2)
+(struct join-jus (vals))
 
 (struct proof-manager
-  (jus-existence
+  (jus-term-existence
+   jus-fact-existence
    jus-equivalence))
 
 (define (make-proof-manager)
   (proof-manager (make-hash)
+                 (make-hash)
                  (make-hash)))
 
-(define (justify-existence proof-manager term jus)
-  (define jus-existence (proof-manager-jus-existence proof-manager))
-  (hash-set! jus-existence term jus))
+(define (add-term-proof proof-manager term jus)
+  (define jus-term-existence (proof-manager-jus-term-existence proof-manager))
+  (hash-set! jus-term-existence term jus))
 
-(define (justify-equivalence proof-manager term1 term2 jus)
+(define (add-fact-proof proof-manager fun args val jus)
+  (define jus-fact-existence (proof-manager-jus-fact-existence proof-manager))
+  (hash-set! jus-fact-existence (list fun args val) jus))
+
+(define (add-equiv-proof proof-manager term1 term2 jus)
   (define jus-equivalence (proof-manager-jus-equivalence proof-manager))
   (hash-set! jus-equivalence (cons term1 term2) jus))
 
@@ -35,10 +50,3 @@
 (define (termify egraph m)
   m
   )
-
-
-;; Basically, the algorithm is
-;; 1. Termify the substitution, get a justification
-;; 2. Every time make changes to the database or the union find, 
-;;    use the justification
-;; 3. ?? Apply the congruence rule: run congruence rule over the term graph? 

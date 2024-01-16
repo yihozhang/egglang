@@ -19,8 +19,6 @@
    fr
    ;; to
    to
-   ;; justification
-   jus
    ;; timestamp
    ts
    ;; Is the union operation applied reversely
@@ -51,14 +49,20 @@
                                  [parent leader]))
         leader)))
 
-(define (uf-union! a b jus)
+(define (uf-union! uf-mapper a b)
+  (define a+ (hash-ref uf-mapper a))
+  (define b+ (hash-ref uf-mapper b))
+  (define res (uf-union!-impl a+ b+))
+  (if (equal? res a+) a b))
+
+(define (uf-union!-impl a b)
   (define pa (uf-find a))
   (define pb (uf-find b))
   (define pa-rank (eclass-rank (unbox pa)))
   (define pb-rank (eclass-rank (unbox pb)))
 
   (define (update pa pb rev?)
-    (define record (union-record a b jus (get-timestamp) rev?))
+    (define record (union-record a b (get-timestamp) rev?))
     (set-box! pa (struct-copy eclass (unbox pa)
                               [parent pb]
                               [proof-parent pb]
@@ -104,10 +108,11 @@
           (define path (append lpath rpath))
           ;; The latest union operation must be part of the proof
           (define max-record (argmax union-record-ts path))
-          (match-define (union-record fr to jus ts rev?) max-record)
+          (match-define (union-record fr to ts rev?) max-record)
 
           (define (build-proof fr to)
-            (append (get-proof a fr) (list (cons jus rev?)) (get-proof to b)))
+            ;; Jan 13: TODO: (list fr to) since jus is no longer part of proof-record
+            (append (get-proof a fr) (list (cons (list fr to) rev?)) (get-proof to b)))
           (if (not rev?)
               (build-proof fr to)
               (build-proof to fr))]))
@@ -119,18 +124,18 @@
 
   (define (x i) (list-ref xs i))
 
-  (uf-union! (x 1) (x 8) "(1, 8)")
-  (uf-union! (x 7) (x 2) "(7, 2)")
-  (uf-union! (x 3) (x 13) "(3, 13)")
-  (uf-union! (x 7) (x 1) "(7, 1)")
-  (uf-union! (x 6) (x 7) "(6, 7)")
-  (uf-union! (x 9) (x 5) "(9, 5)")
-  (uf-union! (x 9) (x 3) "(9, 3)")
-  (uf-union! (x 14) (x 11) "(14, 11)")
-  (uf-union! (x 10) (x 4) "(10, 4)")
-  (uf-union! (x 12) (x 9) "(12, 9)")
-  (uf-union! (x 4) (x 11) "(4, 11)")
-  (uf-union! (x 10) (x 7) "(10, 7)")
+  (uf-union!-impl (x 1) (x 8))
+  (uf-union!-impl (x 7) (x 2))
+  (uf-union!-impl (x 3) (x 13))
+  (uf-union!-impl (x 7) (x 1))
+  (uf-union!-impl (x 6) (x 7))
+  (uf-union!-impl (x 9) (x 5))
+  (uf-union!-impl (x 9) (x 3))
+  (uf-union!-impl (x 14) (x 11))
+  (uf-union!-impl (x 10) (x 4))
+  (uf-union!-impl (x 12) (x 9))
+  (uf-union!-impl (x 4) (x 11))
+  (uf-union!-impl (x 10) (x 7))
 
   (get-proof (x 1) (x 4))
   (get-proof (x 4) (x 8))

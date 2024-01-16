@@ -2,7 +2,7 @@
 
 (require "../src/lib.rkt")
 
-(function (fib-demand i64) unit)
+(function (fib-demand i64) unit-lat)
 (function (fib i64) i64)
 
 (run-action! (fib-demand 20))
