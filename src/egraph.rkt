@@ -342,17 +342,18 @@
                 ; function case
                 (define table (lookup-function egraph fun))
                 (define result (table-get table pat #:full-tuple? #t))
-                (define output-type (function-output-type fun))
+                (define type-sig (append (function-input-types fun) (list (function-output-type fun))))
                 (define (bound-and-proceed tuple)
                   (define-values (m+ valid?)
                     ; `valid?` is used to handle non-linear patterns
                     (for/fold ([m m] [valid? #t])
                               ([arg args]
                                [tuple-val tuple]
+                               [type type-sig]
                                #:when (symbol? arg)
                                #:break (not valid?))
                       (define instantiated (assoc arg m))
-                      (cond [(not instantiated) (values (cons `(,arg ,output-type . ,tuple-val) m) #t)]
+                      (cond [(not instantiated) (values (cons `(,arg ,type . ,tuple-val) m) #t)]
                             [(equal? (cddr instantiated) tuple-val) (values m #t)]
                             [else (values m #f)])
                       ))
@@ -408,6 +409,8 @@
 
   term-val)
 
+;; if the signature contains terms, then we can't generate proofs for it
+;; TODO: lambda does have term constructors like Value@
 (define (can-generate-proof? function)
   (not (or (ormap term? (function-input-types function))
            (term? (function-output-type function)))))
@@ -415,6 +418,7 @@
 (define (termify egraph context)
   (map (match-lambda
          [`(,name ,type . ,val)
+          ; (displayln (format "termifying ~a ~a ~a" name type val))
           `(,name ,(get-term-from-maybe-sort type egraph) . ,(get-repr-term egraph type val))])
        context))
 
@@ -521,6 +525,8 @@
         ['()
          (values m updates)])))
 
+  ; (displayln "context")
+  ; (displayln context)
   ;; Step 2: Register proofs for the term graph
   (when (rule-jus? jus)
     (define termified-context (termify egraph context))

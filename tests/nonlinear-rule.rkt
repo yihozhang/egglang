@@ -2,9 +2,8 @@
 
 (require "../src/lib.rkt")
 
-(sort Math)
-(function (Num Number) Math)
-(function (Sub Math Math) Math)
+(datatype Math (Num Number) (Sub Math Math))
+
 (rewrite (Sub a a) (Num 0))
 
 (run-action! (Sub (Num 1) (Num 2)))

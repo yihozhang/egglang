@@ -52,7 +52,48 @@
       (define as (actions (list (set-action D:=>@ '(e) 'e@))))
       (rule name q as)))
 
+  ; (define =>@-rules
+  ;   (for/list ([constructor-sig (in-list constructors)])
+  ;     (define func (car constructor-sig))
+  ;     (define func+ (cadr constructor-sig))
+  ;     (define args (cddr constructor-sig))
+
+  ;     (define sort-vars
+  ;       (for/list ([_ args]
+  ;                  [i (in-naturals)])
+  ;         (string->symbol (format "x~a" i))))
+  ;     (define term-vars
+  ;       (for/list ([_ args]
+  ;                  [i (in-naturals)])
+  ;         (string->symbol (format "x~a@" i))))
+
+  ;     (define top-atom (value-eq 'e (call func sort-vars)))
+  ;     (define mapping-atoms
+  ;       (for/list ([arg args]
+  ;                  [term-var term-vars]
+  ;                  [sort-var sort-vars])
+  ;         (if (sort? arg)
+  ;             (let* ([arg:=>@ (get-=>@ arg)])
+  ;               (value-eq term-var (call arg:=>@ (list sort-var))))
+  ;             (value-eq sort-var term-var))))
+
+  ;     (define q (query (cons top-atom mapping-atoms)))
+  ;     (define as (actions (list (set-action D:=>@ '(e) (call func+ term-vars)))))
+
+  ;     (define name (string->symbol (format "~a:=>@--~a"
+  ;                                          (base-type-name D)
+  ;                                          (function-name func))))
+  ;     (rule name q as)))
+
   (parameterize ([current-ruleset '@])
-    (for ([rule (in-list @=>-rules)])
+    (for ([rule @=>-rules])
       (register-rule rule))
-    (register-rule =>@-rule)))
+    (register-rule =>@-rule)
+    )
+
+  ; (parameterize ([current-ruleset '@])
+  ;   (for ([rule (in-list (append @=>-rules =>@-rules))])
+  ;     (register-rule rule)
+  ;     )
+  ;   )
+  )

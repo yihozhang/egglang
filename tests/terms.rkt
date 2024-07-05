@@ -29,7 +29,7 @@
 (run-action! (Add@ (Add@ (Num@ 1) (Num@ 2)) (Num@ 3)))
 
 (for ([i 10])
-  (run1)
-  (saturate '@))
+  (saturate '@)
+  (run1))
 
 (pretty-print (run-query (string-of (Add@ (Add@ (Num@ 1) (Num@ 2)) (Num@ 3)))))
