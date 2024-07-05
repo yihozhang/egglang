@@ -7,7 +7,7 @@
          ;; sort and term
          register-sort register-term
          register-sort-term-pair register-cstr-cstr@-pair
-         get-term-or-id get-term
+         get-term-from-maybe-sort get-term-from-sort
          get-=>@ get-@=>
          egraph-sorts
          ;; rules
@@ -210,11 +210,11 @@
 
 ;; If maybe-sort is a sort with corresponding term, returns the term
 ;; Otherwise, this is an identity function.
-(define (get-term-or-id maybe-sort (egraph (current-egraph)))
+(define (get-term-from-maybe-sort maybe-sort (egraph (current-egraph)))
   (hash-ref (egraph-sort->term egraph) maybe-sort maybe-sort))
 
-(define (get-term maybe-sort (egraph (current-egraph)))
-  (hash-ref (egraph-sort->term egraph) maybe-sort))
+(define (get-term-from-sort sort (egraph (current-egraph)))
+  (hash-ref (egraph-sort->term egraph) sort))
 
 ;; Registers a rule
 (define (register-rule rule [egraph (current-egraph)] [ruleset (current-ruleset)])
@@ -318,9 +318,13 @@
 
 (define (run-core-query egraph query)
   (define (go egraph atoms m)
+    ; while m is a list of bindings (name type . value),
+    ; eval arg for run-core-query always ignores the type and
+    ; only returns the value for the given name, different from
+    ; run-core-actions!
     (define (eval-arg arg) (if (symbol? arg)
                                (let ([val (assoc arg m)])
-                                 (if val (cdr val)
+                                 (if val (cddr val)
                                      (pattern-hole)))
                                arg))
     (match atoms
@@ -338,6 +342,7 @@
                 ; function case
                 (define table (lookup-function egraph fun))
                 (define result (table-get table pat #:full-tuple? #t))
+                (define output-type (function-output-type fun))
                 (define (bound-and-proceed tuple)
                   (define-values (m+ valid?)
                     ; `valid?` is used to handle non-linear patterns
@@ -347,8 +352,8 @@
                                #:when (symbol? arg)
                                #:break (not valid?))
                       (define instantiated (assoc arg m))
-                      (cond [(not instantiated) (values (cons (cons arg tuple-val) m) #t)]
-                            [(equal? (cdr instantiated) tuple-val) (values m #t)]
+                      (cond [(not instantiated) (values (cons `(,arg ,output-type . ,tuple-val) m) #t)]
+                            [(equal? (cddr instantiated) tuple-val) (values m #t)]
                             [else (values m #f)])
                       ))
                   (if valid?
@@ -364,7 +369,9 @@
                 (when (ormap pattern-hole? in-pats)
                   (raise (format "Cannot execute query as ~a cannot be fully instantiated." (car atoms))))
                 (define computed-val (apply (computed-function-run fun) in-pats))
-                (cond [(pattern-hole? out-pat) (go egraph atoms+ (cons (cons (last args) computed-val) m))]
+                (cond [(pattern-hole? out-pat)
+                       (define m+ (cons `(,(last args) ,(type-of-literal computed-val). ,computed-val) m))
+                       (go egraph atoms+ m+)]
                       [(equal? out-pat computed-val) (go egraph atoms+ m)]
                       [else '()])]
                [else (raise (format "unsupported atom ~a" (car atoms)))]
@@ -374,9 +381,6 @@
   (go egraph (core-query-atoms query) '()))
 
 ;; Gets the representative term value of a sort value
-;; TODO: question: if the expr is just created by an earlier action in
-;; a sequence of actions, and no =>@ rule is run in between,
-;; how can we still get the repr term out of an expr?
 (define (get-repr-term egraph sort expr)
   (if (sort? sort)
       (let ()
@@ -408,16 +412,24 @@
   (not (or (ormap term? (function-input-types function))
            (term? (function-output-type function)))))
 
+(define (termify egraph context)
+  (map (match-lambda
+         [`(,name ,type . ,val)
+          `(,name ,(get-term-from-maybe-sort type egraph) . ,(get-repr-term egraph type val))])
+       context))
+
 ;; Returns the result context after running actions
 ;; as well as the number of updated tuples
 (define (run-core-actions! egraph actions jus [m '()])
   (unless (or (rule-jus? jus) (user-jus? jus))
     (error "jus must be either a rule-jus or a user-jus"))
 
+  ;; Returns a pair of the type and the value of this type
   (define (eval-arg m arg)
     (if (symbol? arg)
         (cdr (assoc arg m))
-        arg))
+        ; In this case arg must be a literal
+        (cons (type-of-literal arg) arg)))
 
   (define proof-manager (egraph-proof-manager egraph))
   (define-values (context updates)
@@ -429,13 +441,15 @@
         [(cons action rest)
          (match action
            [(core-let-atom-action var fun args)
-            (define args+ (map (curry eval-arg m) args))
+            (define args+ (map (compose cdr (curry eval-arg m)) args))
             (define-values (val updated?)
               (cond [(function? fun) (eval!-function egraph fun args+)]
                     [(computed-function? fun) (values (apply (computed-function-run fun) args+) #f)]))
 
+            (define output-type
+              (cond [(function? fun) (function-output-type fun)]
+                    [(computed-function? fun) (type-of-literal val)]))
             (when (and proof-manager updated? (can-generate-proof? fun))
-              (define output-type (function-output-type fun))
               (cond
                 [(sort? output-type)
                  (define term-val (eval!-term-function egraph fun args+ val))
@@ -445,16 +459,16 @@
                  (define args+-term (map (curry get-repr-term egraph) arg+-types args+))
                  (add-fact-proof proof-manager fun args+-term val jus)]))
 
-            (define m+ (cons (cons var val) m))
+            (define m+ (cons `(,var ,output-type . ,val) m))
             (define updates+ (+ updates (if updated? 1 0)))
             (go rest m+ updates+)]
            [(core-let-val-action var val)
-            (define val+ (eval-arg m val))
-            (define m+ (cons (cons var val+) m))
+            (match-define (cons ty val+) (eval-arg m val))
+            (define m+ (cons `(,var ,ty . ,val+) m))
             (go rest m+ updates)]
            [(core-set-action fun args expr)
-            (define args+ (map (curry eval-arg m) args))
-            (define expr+ (eval-arg m expr))
+            (define args+ (map (compose cdr (curry eval-arg m)) args))
+            (define expr+ (cdr (eval-arg m expr)))
             (define update-status (set!-function egraph fun args+ expr+))
             (define updated? (not (equal? update-status '(not-updated))))
             (define updates+ (+ updates (if updated? 1 0)))
@@ -491,14 +505,13 @@
             (go rest m updates+)]
            [(core-union-action v1 v2)
             (define uf-mapper (egraph-uf-mapper egraph))
-            (define v1+ (eval-arg m v1))
-            (define v2+ (eval-arg m v2))
-            (uf-union! uf-mapper v1+ v2+)
+            (match-define (cons ty-v1+ v1+) (eval-arg m v1))
+            (match-define (cons ty-v2+ v2+) (eval-arg m v2))
+            (uf-union! uf-mapper (cdr v1+) (cdr v2+))
 
             (when proof-manager
-              ;; TODO: make substitution also contain type information
-              (define v1-term (get-repr-term egraph v1+))
-              (define v2-term (get-repr-term egraph v2+))
+              (define v1-term (get-repr-term egraph ty-v1+ v1+))
+              (define v2-term (get-repr-term egraph ty-v2+ v2+))
               (uf-union! v1-term v2-term)
               (add-equiv-proof proof-manager v1-term v2-term jus))
 

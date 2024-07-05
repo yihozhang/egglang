@@ -2,7 +2,7 @@
 
 (require "../src/lib.rkt")
 (datatype Math
-          (Num i64)
+          (Num Number)
           (Sub Math Math))
 
 

@@ -2,8 +2,8 @@
 
 (require "../src/lib.rkt")
 
-(function (fib-demand i64) unit-lat)
-(function (fib i64) i64)
+(function (fib-demand Number) unit-lat)
+(function (fib Number) Number)
 
 (run-action! (fib-demand 20))
 

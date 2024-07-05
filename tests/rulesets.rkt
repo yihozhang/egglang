@@ -2,7 +2,7 @@
 
 (require "../src/lib.rkt")
 
-(datatype Math (Num i64) (Add Math Math))
+(datatype Math (Num Number) (Add Math Math))
 
 (ruleset a
          (rule () ((Num 1))))

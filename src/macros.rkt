@@ -141,7 +141,7 @@
              (register-sort-term-pair D D@ D:=>@ D:@=>)
              (make-constructor (func args ...) D)
              ...
-             (make-constructor (func+ (get-term-or-id args) ...) D@)
+             (make-constructor (func+ (get-term-from-maybe-sort args) ...) D@)
              ...
              (register-cstr-cstr@-pair func func+)
              ...
@@ -161,7 +161,7 @@
        (with-syntax ([name@ (@ #'name)])
          #'(begin
              (make-constructor (name) type)
-             (define type@ (get-term type))
+             (define type@ (get-term-from-sort type))
              (make-constructor (name@) type@)
              (register-cstr-cstr@-pair name name@)
              (make-run-action! (name))

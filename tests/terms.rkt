@@ -4,7 +4,7 @@
 
 
 (datatype Math
-          (Num i64)
+          (Num Number)
           (Add Math Math)
           (Mul Math Math))
 

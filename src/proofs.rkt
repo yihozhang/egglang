@@ -10,14 +10,15 @@
          make-proof-manager
          add-term-proof
          add-fact-proof
-         add-equiv-proof
-         termify)
+         add-equiv-proof)
 ;; There are four kinds of justifications:
 ;;  1. User-defined justification
 ;;  2. Rule-based justification
 ;;  3. Congruence
 ;;  4. Lattice-join justification
 (struct user-jus (cause))
+; a context in a rule justification is a list of pairs of names and
+; representative terms
 (struct rule-jus (cause [context #:mutable]))
 (struct cong-jus (fun args1 args2))
 ;; vals is a list of lattice values (cons val1 val2)
@@ -45,8 +46,21 @@
   (define jus-equivalence (proof-manager-jus-equivalence proof-manager))
   (hash-set! jus-equivalence (cons term1 term2) jus))
 
-;; Replace every sort variable in the context
-;; with corresponding term
-(define (termify egraph m)
-  m
+(define (get-existence-proof-impl proof-manager term result)
+  (hash-ref! result term
+             (lambda ()
+               (define jus-term-existence (proof-manager-jus-term-existence proof-manager))
+               (define proof (hash-ref jus-term-existence term #f))
+
+               (if (not proof)
+                   (error 'get-existence-proof "No proof for term ~a" term)
+                   (cond [(rule-jus? proof)
+                          (define context (rule-jus-context proof))
+                          (for ([binding context])
+                            (get-existence-proof-impl proof-manager (cdr binding) result))
+                          ]
+                         [(cong-jus? proof) (error 'get-existence-proof-impl "ugh")]
+                         [(join-jus? proof) (error 'get-existence-proof-impl "ugh")]
+                         [(user-jus? proof) #f])))
+             )
   )

@@ -4,14 +4,14 @@
          racket/function
          "union-find.rkt")
 
-(provide i64 u64 String Rational unit
+(provide Number String Rational Unit
          min-nat unit-lat
          semilattice
          semilattice?
          sort term
          sort? term?
          show-base-type base-type-name
-         literal? literal-type?
+         literal? literal-type? type-of-literal
          ;; function related
          function
          function? show-function function-name
@@ -33,37 +33,34 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; base types
 
-(define i64 'i64)
-(define u64 'u64)
+(define Number 'Number)
 (define String 'String)
 (define Rational 'Rational)
-(define unit 'unit)
+(define Unit 'Unit)
 (struct semilattice (name dom bot join))
 (struct sort (name) #:transparent)
 (struct term (name) #:transparent)
 
-(define min-nat (semilattice 'min-nat u64 0 +))
-(define unit-lat (semilattice 'unit-lat unit '() (lambda (x y) '())))
+(define min-nat (semilattice 'min-nat Number 0 +))
+(define unit-lat (semilattice 'unit-lat Unit '() (lambda (x y) '())))
 
 (define (show-base-type type)
   (match type
     [(semilattice name dom bot join) `(semilattice ,name)]
-    ['i64 'i64]
-    ['u64 'u64]
+    ['Number 'Number]
     ['Rational 'Rational]
     ['String 'String]
-    ['unit 'unit]
+    ['Unit 'Unit]
     [(sort name) `(sort ,name)]
     [(term name) `(term ,name)]))
 
 (define (base-type-name type)
   (match type
     [(semilattice name dom bot join) name]
-    ['i64 'i64]
-    ['u64 'u64]
+    ['Number 'Number]
     ['Rational 'Rational]
     ['String 'String]
-    ['unit 'unit]
+    ['Unit 'Unit]
     [(sort name) name]
     [(term name) name]))
 
@@ -74,8 +71,14 @@
 
 (define (literal-type? type)
   (match type
-    [(or 'i64 'u64 'Rational 'String 'unit) #t]
+    [(or 'Number 'Rational 'String 'Unit) #t]
     [_ #f]))
+
+(define (type-of-literal lit)
+  (cond [(number? lit) Number]
+        [(rational? lit) Rational]
+        [(string? lit) String]
+        [(null? lit) Unit]))
 
 (define make-uf-mapper make-hash)
 (define uf-mapper-copy hash-copy)
@@ -118,6 +121,9 @@
    )
   #:transparent)
 
+;; NB: computed functions currently can only return
+;; literals as outputs, for otherwise the type of the
+;; output cannot be determined and conflicts with proofs.
 (struct computed-function
   (name
    run)
