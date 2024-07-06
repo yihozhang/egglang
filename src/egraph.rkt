@@ -412,13 +412,14 @@
 ;; if the signature contains terms, then we can't generate proofs for it
 ;; TODO: lambda does have term constructors like Value@
 (define (can-generate-proof? function)
-  (not (or (ormap term? (function-input-types function))
-           (term? (function-output-type function)))))
+  #t
+  ; (not (or (ormap term? (function-input-types function))
+  ;          (term? (function-output-type function))))
+  )
 
 (define (termify egraph context)
   (map (match-lambda
          [`(,name ,type . ,val)
-          ; (displayln (format "termifying ~a ~a ~a" name type val))
           `(,name ,(get-term-from-maybe-sort type egraph) . ,(get-repr-term egraph type val))])
        context))
 
@@ -511,12 +512,12 @@
             (define uf-mapper (egraph-uf-mapper egraph))
             (match-define (cons ty-v1+ v1+) (eval-arg m v1))
             (match-define (cons ty-v2+ v2+) (eval-arg m v2))
-            (uf-union! uf-mapper (cdr v1+) (cdr v2+))
+            (uf-union! uf-mapper v1+ v2+)
 
             (when proof-manager
               (define v1-term (get-repr-term egraph ty-v1+ v1+))
               (define v2-term (get-repr-term egraph ty-v2+ v2+))
-              (uf-union! v1-term v2-term)
+              (uf-union! uf-mapper v1-term v2-term)
               (add-equiv-proof proof-manager v1-term v2-term jus))
 
             ;; We don't update counts for union, as
@@ -525,8 +526,6 @@
         ['()
          (values m updates)])))
 
-  ; (displayln "context")
-  ; (displayln context)
   ;; Step 2: Register proofs for the term graph
   (when (rule-jus? jus)
     (define termified-context (termify egraph context))

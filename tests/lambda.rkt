@@ -147,11 +147,8 @@
 
 (define (run-schedule n)
   (for ([_ n])
-    (saturate '@)
     (run1)
-    (saturate '@)
     (run1 'evals-to)
-    (saturate '@)
     (run1 'freer)
     (saturate '@)))
 
