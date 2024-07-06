@@ -412,10 +412,8 @@
 ;; if the signature contains terms, then we can't generate proofs for it
 ;; TODO: lambda does have term constructors like Value@
 (define (can-generate-proof? function)
-  #t
   ; (not (or (ormap term? (function-input-types function))
-  ;          (term? (function-output-type function))))
-  )
+  (sort? (function-output-type function)))
 
 (define (termify egraph context)
   (map (match-lambda
