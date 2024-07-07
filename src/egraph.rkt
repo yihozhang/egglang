@@ -4,6 +4,7 @@
          ;; functions
          register-function register-constructor
          egraph-functions
+         egraph-proof-manager
          ;; sort and term
          register-sort register-term
          register-sort-term-pair register-cstr-cstr@-pair
@@ -17,6 +18,10 @@
          print-size print-table
          run1 run run-action! run-query saturate
          table-length ;; TODO: export table-related APIs
+         ;; temporary
+         lookup-function
+         eval!-function
+         get-repr-term
          )
 (require data/gvector
          racket/function
@@ -397,6 +402,7 @@
 ;; Inserts the term version of the E-node into the database
 ;; Returns the term value
 (define (eval!-term-function egraph fun args sort-val)
+  (displayln (format "eval!-term-function ~a ~a ~a" fun args sort-val))
   (define arg-types (function-input-types fun))
   (define out-type (function-output-type fun))
   (define args-term (map (curry get-repr-term egraph) arg-types args))
@@ -409,11 +415,10 @@
 
   term-val)
 
-;; if the signature contains terms, then we can't generate proofs for it
-;; TODO: lambda does have term constructors like Value@
+;; We only generate proofs for facts, lattice, and sort functions
+;; (i.e., no terms)
 (define (can-generate-proof? function)
-  ; (not (or (ormap term? (function-input-types function))
-  (sort? (function-output-type function)))
+  (not (term? (function-output-type function))))
 
 (define (termify egraph context)
   (map (match-lambda
