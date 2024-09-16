@@ -1,6 +1,7 @@
 #lang racket
 
 (require "../src/lib.rkt")
+(provide (all-defined-out))
 
 ;; Implements part of the simplification layer of herbie in egglog🫡
 

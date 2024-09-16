@@ -4,18 +4,20 @@
          racket/function
          "union-find.rkt")
 
-(provide i64 u64 String Rational unit
+(provide Number String Rational Unit
+         min-nat unit-lat
          semilattice
          semilattice?
          sort term
          sort? term?
          show-base-type base-type-name
-         literal? literal-type?
+         literal? literal-type? type-of-literal
          ;; function related
          function
          function? show-function function-name
          function-input-types function-output-type
          function-arity
+         function-intrinsic? function-constructor?
          ;; computed function related
          computed-function
          computed-function?
@@ -31,34 +33,34 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; base types
 
-(define i64 'i64)
-(define u64 'u64)
+(define Number 'Number)
 (define String 'String)
 (define Rational 'Rational)
-(define unit 'unit)
+(define Unit 'Unit)
 (struct semilattice (name dom bot join))
 (struct sort (name) #:transparent)
 (struct term (name) #:transparent)
 
+(define min-nat (semilattice 'min-nat Number 0 +))
+(define unit-lat (semilattice 'unit-lat Unit '() (lambda (x y) '())))
+
 (define (show-base-type type)
   (match type
     [(semilattice name dom bot join) `(semilattice ,name)]
-    ['i64 'i64]
-    ['u64 'u64]
+    ['Number 'Number]
     ['Rational 'Rational]
     ['String 'String]
-    ['unit 'unit]
+    ['Unit 'Unit]
     [(sort name) `(sort ,name)]
     [(term name) `(term ,name)]))
 
 (define (base-type-name type)
   (match type
     [(semilattice name dom bot join) name]
-    ['i64 'i64]
-    ['u64 'u64]
+    ['Number 'Number]
     ['Rational 'Rational]
     ['String 'String]
-    ['unit 'unit]
+    ['Unit 'Unit]
     [(sort name) name]
     [(term name) name]))
 
@@ -69,8 +71,14 @@
 
 (define (literal-type? type)
   (match type
-    [(or 'i64 'u64 'Rational 'String 'unit) #t]
+    [(or 'Number 'Rational 'String 'Unit) #t]
     [_ #f]))
+
+(define (type-of-literal lit)
+  (cond [(number? lit) Number]
+        [(rational? lit) Rational]
+        [(string? lit) String]
+        [(null? lit) Unit]))
 
 (define make-uf-mapper make-hash)
 (define uf-mapper-copy hash-copy)
@@ -82,19 +90,17 @@
                                 (hash-set! uf-mapper sym uf-val)
                                 sym)]
         [(semilattice? type) (semilattice-bot type)]
-        [(equal? unit type) '()]
         [else (raise (format "no default value for ~a" type))]))
 
 (define (merge-fn! uf-mapper type vals)
   (cond [(sort? type)        (define canon-uf-val
-                               (foldl (lambda (l acc) (uf-union! (hash-ref uf-mapper l) acc 'todo))
-                                      (hash-ref uf-mapper (car vals))
+                               (foldl (lambda (l acc) (uf-union! uf-mapper l acc))
+                                      (car vals)
                                       (cdr vals)))
-                             (eclass-id canon-uf-val)]
+                             canon-uf-val]
         ;;  terms implement the choice operator of Datalog
         [(term? type) (car vals)]
         [(semilattice? type) (foldl (semilattice-join type) (car vals) (cdr vals))]
-        [(equal? unit type) '()]
         [else (if (andmap (curry equal? (car vals)) (cdr vals))
                   (car vals)
                   (raise (format "merge function is not supported for ~a" type)))]))
@@ -111,9 +117,13 @@
    ;; a pair of input types and output type
    types
    constructor?
+   intrinsic?
    )
   #:transparent)
 
+;; NB: computed functions currently can only return
+;; literals as outputs, for otherwise the type of the
+;; output cannot be determined and conflicts with proofs.
 (struct computed-function
   (name
    run)
@@ -123,7 +133,7 @@
   (cond ([function? head] (function-name head))
         ([computed-function? head] (computed-function-name head))))
 
-(define Impossible (function 'Impossible (cons '() unit) #f))
+(define Impossible (function 'Impossible (cons '() unit-lat) #f #t))
 
 (define (show-computed-function func)
   (define name (computed-function-name func))
@@ -139,4 +149,3 @@
 (define function-input-types (compose car function-types))
 (define function-output-type (compose cdr function-types))
 (define function-arity (compose add1 length function-input-types))
-(define min-nat (semilattice 'min-nat u64 0 +))

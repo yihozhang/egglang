@@ -19,7 +19,7 @@
 (define != (compose not equal?))
 
 ;; Value
-(function (Num@ i64) Value@)
+(function (Num@ Number) Value@)
 (function (True@) Value@)
 (function (False@) Value@)
 
